@@ -1,0 +1,25 @@
+# Normalize line endings: the protocol is read by humans and diffed constantly,
+# and a CRLF/LF mix produces diffs that hide real changes.
+* text=auto eol=lf
+
+# Specifications, code and configuration: treat as text, always LF.
+*.md   text eol=lf
+*.json text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.cash text eol=lf
+
+# CashScript sources must never be touched by an editor's filters.
+*.cash -text
+
+# Compiled artifacts contain a JSON payload; keep them diffable as text but do
+# not let git try to renormalize their content, which would invalidate the
+# byte-for-byte comparison that tools/check-artifacts.mjs performs.
+artifacts/*.json -text
+
+# Binary that must never be transformed.
+*.png binary
+*.jpg binary
+*.pdf binary

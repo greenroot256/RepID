@@ -1,0 +1,202 @@
+diff --git a/spec/SPEC-008-repid-protocol.md b/spec/SPEC-008-repid-protocol.md
+index eda2e8d..f9cfb32 100644
+--- a/spec/SPEC-008-repid-protocol.md
++++ b/spec/SPEC-008-repid-protocol.md
+@@ -35,7 +35,7 @@ Objective: define RepID's entities, events, cryptographic/on-chain rules, verifi
+ 
+ ### 1.3 Scope
+ 
+-**In scope**: identity and collateral; interaction (off-chain metadata); interaction receipt; rating rights; rating; platform validation; trust link; fact recognition/indexing; conformance rules.
++**In scope**: identity and collateral; interaction (off-chain metadata); interaction receipt; rating rights; rating; rating retraction; platform validation; trust link; fact recognition/indexing; conformance rules.
+ 
+ **Out** (non-normative for the protocol): reputation and trust algorithms; collusion/farming detection; anti-sybil policies; user interfaces; persistence; deployment network; resolution of the `pkh → Identity` link.
+ 
+@@ -49,7 +49,8 @@ Entities and relationships. `pkh` identifiers are 20-byte public-key hashes; `ca
+ | **Interaction** | Application metadata | None (off-chain) | roles, `partyAPkh`, `partyBPkh`, `protocolRef` |
+ | **Receipt** | Immutable NFT | Output 0 of the receipt's genesis | `receiptCategory`, `receiptOwnerPkh` (= `partyA`) |
+ | **Rating Right** | Single-use NFT | Outputs 1 and 2 of the genesis | `ownerPkh`, `ratesPkh` (the counterparty) |
+-| **Rating** | Fact (spend + `OP_RETURN`) | Transaction that spends a Rating Right | `raterPkh`, `rateePkh`, `score` |
++| **Rating** | Fact (spend + `OP_RETURN`) | Transaction that spends a Rating Right | `raterPkh`, `rateePkh`, `score`, `commentHash`? |
++| **Rating retraction** | Fact (spend + `OP_RETURN`) | Rater's P2PKH transaction | `raterPkh`, `receiptTxid` |
+ | **Platform validation** | Fact (spend + `OP_RETURN`) | Validator's P2PKH transaction | `platformPkh`, `receiptTxid` |
+ | **Trust Link** | Fact (spend + `OP_RETURN`) | Declarant's P2PKH transaction | `trusterPkh`, `trustedPkh` |
+ 
+@@ -59,7 +60,8 @@ Entities and relationships. `pkh` identifiers are 20-byte public-key hashes; `ca
+ - A **Receipt** corresponds to exactly one interaction and fixes exactly **two** parties (`partyA` = receipt holder; `partyB`).
+ - A Receipt originates exactly **two Rating Rights**: one from `partyA` rating `partyB`, and one from `partyB` rating `partyA` (cross relationship).
+ - A **Rating Right** produces **at most one Rating** (its spend burns it).
+-- An **Identity** can receive and emit N Ratings, N Validations and N Trust Links; there is no protocol limit on quantity.
++- A **Rating** can be retracted at most once, by the rater, keyed by the rating's Receipt txid; the retraction is a new fact (the original rating is never deleted).
++- An **Identity** can receive and emit N Ratings, N Retractions, N Validations and N Trust Links; there is no protocol limit on quantity.
+ - A **Trust Link** is unilateral `A → B` and requires neither B's consent nor B's identity; it does not enable rating.
+ - A **platform validation** references a Receipt's txid and does not modify it.
+ 
+@@ -73,7 +75,7 @@ Entities and relationships. `pkh` identifiers are 20-byte public-key hashes; `ca
+ 
+ ## 3. Protocol Events
+ 
+-The protocol defines **seven** fact types. A fact is a structured object reconstructed from a transaction; its fields and their types are normative.
++The protocol defines **eight** fact types. A fact is a structured object reconstructed from a transaction; its fields and their types are normative.
+ 
+ ### 3.1 Normative events table
+ 
+@@ -82,19 +84,21 @@ The protocol defines **seven** fact types. A fact is a structured object reconst
+ | E1 | `IDENTITY_GENESIS` | An identity was minted | `txid`, `identityCategory`, `ownerPkh`; in vault form also `collateral` (string), `identityOutpoint` |
+ | E2 | `IDENTITY_COLLATERAL_TOP_UP` | An identity's collateral was increased | `txid`, `identityCategory`, `ownerPkh`, `spentOutpoint`, `previousCollateral`, `collateral`, `valid` |
+ | E3 | `IDENTITY_BURNED` | An identity was burned | `txid`, `identityCategory`, `ownerPkh`, `spentOutpoint`, `valid` |
+-| E4 | `RECEIPT_GENESIS` | A receipt and its two Rating Rights were minted | `txid`, `receiptCategory`, `receiptOwnerPkh`, `ratingRights[]` = `{outpoint, ownerPkh, ratesPkh}` ×2 |
+-| E5 | `RATING_ISSUED` | A rating was issued | `txid`, `spentOutpoint`, `raterPkh`, `rateePkh`, `score`, `valid` |
++| E4 | `RECEIPT_GENESIS` | A receipt and its two Rating Rights were minted | `txid`, `receiptCategory`, `receiptOwnerPkh`, `ratingRights[]` = `{outpoint, ownerPkh, ratesPkh}` ×2, `receiptContext`? = `{interactionCategory, roleA, roleB, contextHash?}` |
++| E5 | `RATING_ISSUED` | A rating was issued | `txid`, `spentOutpoint`, `raterPkh`, `rateePkh`, `score`, `commentHash`?, `valid` |
+ | E6 | `PLATFORM_CONFIRMATION` | A platform corroborated an interaction | `txid`, `platformPkh`, `receiptTxid`, `valid` |
+ | E7 | `TRUST_LINK` | A declared trust in B | `txid`, `trusterPkh`, `trustedPkh`, `valid` |
++| E8 | `RATING_RETRACTION` | A rater unilaterally retracted a rating | `txid`, `raterPkh`, `receiptTxid`, `valid` |
+ 
+ ### 3.2 Semantics and relationships
+ 
+ - E1 establishes the existence of an identity and its owner. Without E1 there is no protocol-valid identity.
+ - E2 and E3 only exist with respect to a previously tracked identity (E1 in vault form); they are mutually exclusive in the same vault spend.
+ - E4 establishes a receipt and, with it, two rating rights; it is the only event that creates Rating Rights.
+-- E5 only exists if it spends a Rating Right created by E4; it relates `raterPkh` (right holder) to `rateePkh` (counterparty of that Rating Right).
++- E5 only exists if it spends a Rating Right created by E4; it relates `raterPkh` (right holder) to `rateePkh` (counterparty of that Rating Right). It may carry an optional `commentHash` when the spend used `REPID_RATING2`; the comment itself is never on-chain (SPEC-004 RF-09).
+ - E6 references a receipt by txid; its validity depends on the receipt (E4) being already indexed.
+ - E7 is independent of everything above; it requires no prior identity or interaction.
++- E8 references an E5 by the txid of the Receipt that produced it. It is unilateral (only the rater can spend its own P2PKH UTXO with `REPID_RETRACT1`), a rating can be retracted at most once, and E8 never deletes the original E5: the chain records, it does not rescind.
+ - Every event carries the `txid` of the transaction that originates it.
+ 
+ ### 3.3 Requirements (EARS)
+@@ -103,11 +107,14 @@ The protocol defines **seven** fact types. A fact is a structured object reconst
+ - **RF-E02** (Events): When a collateral increase is recognized, the system must emit an `IDENTITY_COLLATERAL_TOP_UP` fact with `previousCollateral`, `collateral` and `valid`.
+ - **RF-E03** (Events): When an identity burn is recognized, the system must emit an `IDENTITY_BURNED` fact with `identityCategory`, `ownerPkh` and `spentOutpoint`.
+ - **RF-E04** (Events): When a receipt mint is recognized, the system must emit a `RECEIPT_GENESIS` fact with `receiptCategory`, `receiptOwnerPkh` and the two `ratingRights` (`outpoint`, `ownerPkh`, `ratesPkh`).
+-- **RF-E05** (Events): When a rating is recognized, the system must emit a `RATING_ISSUED` fact with `spentOutpoint`, `raterPkh`, `rateePkh` and `score`.
++- **RF-E05** (Events): When a rating is recognized, the system must emit a `RATING_ISSUED` fact with `spentOutpoint`, `raterPkh`, `rateePkh` and `score`; when the spend used `REPID_RATING2`, it must also carry the `commentHash`.
+ - **RF-E06** (Events): When a platform validation is recognized, the system must emit a `PLATFORM_CONFIRMATION` fact with `platformPkh`, `receiptTxid` and `valid`.
+ - **RF-E07** (Events): When a trust link is recognized, the system must emit a `TRUST_LINK` fact with `trusterPkh`, `trustedPkh` and `valid`.
+ - **RF-E08** (Ubiquity): Every fact must include the `txid` of the transaction that originates it.
+ - **RF-E09** (Events): When a fact admits the validity distinction, the system must expose the `valid` field (boolean) without omitting the fact.
++- **RF-E10** (Events): When a rating retraction is recognized, the system must emit a `RATING_RETRACTION` fact with `raterPkh`, `receiptTxid` and `valid`.
++- **RF-E11** (Events): When a receipt is recognized with an interaction context commitment, the system must emit the `RECEIPT_GENESIS` fact with `receiptContext` = `{interactionCategory, roleA, roleB, contextHash?}`, keeping unknown `category`/`role` values raw.
++- **RF-E12** (Events): When a rating retraction references a rating that does not exist, was not signed by the spender, or is already retracted, the system must emit the `RATING_RETRACTION` with `valid: false` and must not delete the original `RATING_ISSUED`.
+ 
+ ## 4. On-Chain Rules (Invariants, Signatures and Mutability)
+ 
+@@ -124,6 +131,7 @@ This section defines what **MUST** be recorded on BCH and the invariants that go
+ - **RF-O04** (Ubiquity): The identity covenant must require the owner's signature (`hash160(pk) == ownerPkh` and `checkSig`) on all its spend paths.
+ - **RF-O05** (Ubiquity): The identity covenant must re-lock the NFT to itself, in output 0, with the same category and commitment; the collateral (`value`) must **never decrease** with respect to the spent value.
+ - **RF-O06** (Ubiquity): The identity covenant must allow burning the NFT without the category reappearing in any output, returning the balance to the owner's P2PKH.
++- **RF-O831** (Ubiquity): The identity covenant's burn path must require the vault's `age` (CashScript `this.age`) to be at least `identityVault.minBurnDelayBlocks` (144, declared in `protocol/constants.json`) before the identity can be burned. A collateral top-up re-locks the NFT and resets the age, so a freshly topped-up identity cannot be burned immediately. Burn `age` is measured in blocks and is bounded by the CashTokens/CashScript ceiling the covenant can detect; an identity aged beyond that ceiling must still be burnable. **Not compiled nor executed by the Bitcoin VM for `0.4.0` (task E pending).**
+ - **RF-O07** (Ubiquity): When a P2PKH change output exists in a genesis or in a vault spend, it must not carry tokens of the operation's category.
+ 
+ ### 4.3 Receipt
+@@ -132,7 +140,7 @@ This section defines what **MUST** be recorded on BCH and the invariants that go
+ - **RF-O821** (Ubiquity): The receipt's genesis covenant must require `partyA` and `partyB` to be **distinct** addresses. A self-receipt is not a Receipt: both Rating Rights would be locked to the same P2PKH, and the Receipt would attest that a wallet interacted with itself, which is precisely the claim a reputation protocol must not let it make.
+ - **RF-O822** (Ubiquity): `partyA`'s Rating Right must be locked under `RatingRightVault` instantiated with `partyA`'s pkh, and `partyB`'s symmetrically. A P2PKH lock does not satisfy this requirement: the UTXO single-spend rule forbids spending one *outpoint* twice but says nothing about the tokens it carries, so a P2PKH holder could return an identical NFT in a new output and rate again.
+ - **RF-O09** (Ubiquity): The receipt's genesis must contain exactly four outputs: receipt (output 0), `partyA`'s Rating Right (output 1), `partyB`'s Rating Right (output 2) and P2PKH change to `partyA` (output 3), all four of the same category except the change, and all without fungibles.
+-- **RF-O10** (Ubiquity): The receipt must be locked to `partyA`'s P2PKH and have an empty `nftCommitment`; `partyA`'s Rating Right must have `commitment = partyB's pkh`, and `partyB`'s `commitment = partyA's pkh` (cross relationship).
++- **RF-O10** (Ubiquity): The receipt must be locked to `partyA`'s P2PKH and have an **empty** `nftCommitment` (legacy form) or a 4-byte/36-byte **interaction context** commitment (SPEC-009 §9.2); `partyA`'s Rating Right must have `commitment = partyB's pkh`, and `partyB`'s `commitment = partyA's pkh` (cross relationship).
+ - **RF-O11** (Ubiquity): The receipt's change output must be `partyA`'s P2PKH and carry no tokens of the issued category.
+ 
+ ### 4.4 Rating
+@@ -143,17 +151,21 @@ This section defines what **MUST** be recorded on BCH and the invariants that go
+ - **RF-O825** (Ubiquity): The receipt's genesis must lock the two Rating Rights to the P2SH32 hashes of `RatingRightVault` instantiated for each party. P2SH32 is the only form a CashScript contract address has, because `new Contract(...)` emits `OP_HASH256 <32> OP_EQUAL`; a P2SH20 lock would be a form the compiler never produces and no deployed right could satisfy. Because CashScript 0.13 cannot reference a contract by name, this commitment travels through the genesis contract's constructor arguments as two `bytes32` values; a receipt is only recognized if those hashes match the canonical `RatingRightVault` bytecode for the derived parties (SPEC-009 RF-W47/RF-W56).
+ - **RF-O13** (Events): When a rating is issued, the system must include an `OP_RETURN` with the `REPID_RATING1` tag and an integer score in the 1–5 range.
+ - **RF-O14** (Undesired Behavior): If the score is outside the 1–5 range, then the fact must be recognized with `valid: false` (the emitted transaction is not considered a valid rating).
++- **RF-O826** (Events): When a rating is issued with `REPID_RATING2`, the system must attach the score (1–5) and a 32-byte `commentHash` computed over `REPID-CMT-V1`, the rater's `pkh`, a salt and the off-chain comment (SPEC-009 §4.2); the NFT is destroyed exactly as with `REPID_RATING1`.
++- **RF-O827** (Events): When a rater retracts a rating, the system must spend the rater's own P2PKH UTXO and include an `OP_RETURN` with the `REPID_RETRACT1` tag and the referenced Receipt's txid (32 bytes). The retraction needs no Rating Right (RF-O824 already destroyed it when the rating was issued).
++- **RF-O828** (Undesired Behavior): If a retraction references an unknown rating, is not signed by the original rater, or is a repeated retraction of the same rating, then the fact must be recognized with `valid: false`; the original `RATING_ISSUED` is never deleted.
+ 
+ ### 4.5 Platform validation and Trust Link
+ 
+ - **RF-O15** (Events): When a platform validates an interaction, the system must spend its own P2PKH UTXO and include an `OP_RETURN` with the `REPID_PLATFORM1` tag and the receipt's txid (32 bytes).
+ - **RF-O16** (Events): When A declares trust in B, the system must spend A's P2PKH UTXO and include an `OP_RETURN` with the `REPID_TRUST1` tag and B's pkh (20 bytes).
+ - **RF-O17** (Undesired Behavior): If a Trust Link declares trust about its own `trusterPkh` (self-trust), then the fact must be recognized with `valid: false`.
++- **RF-O829** (Undesired Behavior): If the confirming entity of a platform validation is `partyA` or `partyB` of the referenced Receipt, then the fact must be recognized with `valid: false`: a party cannot corroborate its own interaction (self-corroboration, SPEC-003 RF-10).
+ 
+ ### 4.6 Mutability
+ 
+ - **RF-O18** (Ubiquity): Identity, receipt and Rating Right NFTs must not be mutable nor re-mintable; the category, once created, must not be re-issued.
+-- **RF-O19** (Ubiquity): An on-chain fact must not be modifiable nor deletable; only new facts can be issued (e.g. burning an identity does not erase its genesis).
++- **RF-O19** (Ubiquity): An on-chain fact must not be modifiable nor deletable; only new facts can be issued (e.g. burning an identity does not erase its genesis; retracting a rating does not erase the rating).
+ - **RF-O20** (Prohibition): No on-chain rule must encode a value judgment (reputation, trust, weighting).
+ 
+ ### 4.7 Byte notes (normative for implementers)
+@@ -191,6 +203,10 @@ Indexing reconstructs facts from the raw hex of a transaction. It is a **determi
+ - **RF-V11** (State): The system must accept that order of appearance matters: a validation can only be validated against already-indexed receipts (deliberate restriction, not hidden).
+ - **RF-V12** (Undesired Behavior): If a genesis transaction matches the shape of a §3 genesis but is not bound to the canonical covenant that §4 requires for its type, then the system must not treat it as having created a RepID identity, a Receipt or any Rating Rights. A shape match alone establishes none of them, because CashTokens lets any script mint a category.
+ - **RF-V13** (Events): The system must still recognize an `IDENTITY_GENESIS` in legacy form — the NFT issued straight to a P2PKH, with no covenant and no collateral — so that the history of identities minted before the vault remains readable, and must not treat it as creating a RepID identity. Legacy genesis is a recorded fact, not an issuance: it is neither current nor deprecated, and it is not the way a new identity is created.
++- **RF-V14** (Events): When a rating retraction is recognized, the system must emit a `RATING_RETRACTION` fact with `raterPkh`, `receiptTxid` and `valid`, and retain the reference (SPEC-005 RF-27) so that a repeated retraction is marked invalid deterministically (SPEC-004 RF-07).
++- **RF-V15** (Events): When a receipt is recognized with an interaction context commitment, the system must emit its `receiptContext` fields and keep unknown `category`/`role` values raw (SPEC-005 RF-23).
++- **RF-V16** (Events): When a rating is recognized from a `REPID_RATING2` spend, the system must include the `commentHash` in `RATING_ISSUED`; the comment itself is never recognized (SPEC-004 RF-09).
++- **RF-V17** (Undesired Behavior): If the confirming entity of a platform validation is `partyA` or `partyB` of the referenced Receipt, the system must mark the `PLATFORM_CONFIRMATION` invalid (recognizer-level restatement of RF-O829 / SPEC-005 RF-26).
+ 
+ ## 6. Reputation Interpretation
+ 
+@@ -215,7 +231,9 @@ For each vector, this section distinguishes **what the protocol guarantees**, **
+ | **Collusion** | Ratings require a receipt signed by both parties and a single Rating Right | Detection and weighting | A real interaction cannot be distinguished from a simulated one |
+ | **Reputation farming** | One rating per Rating Right (`RatingRightVault` destroys the NFT) | Weigh by counterparty/recency/collateral | Nothing prevents multiple valued interactions |
+ | **Selective acceptance** | A non-existent receipt produces no facts | — | There is no on-chain recourse if a party refuses to sign |
+-| **Rating manipulation** | Score outside 1–5 → `valid: false`; fixed range | Judgment about the rating's intent | The protocol does not verify the score's truthfulness |
++| **Rating manipulation** | Score outside 1–5 → `valid: false`; fixed range; `REPID_RATING2` attaches only a comment hash, never the comment | Judgment about the rating's intent and its `commentHash` fidelity | The protocol does not verify the score's truthfulness |
++| **Retraction** | A retraction is unilateral, keyed by the rating's Receipt txid, and recognized at most once per rating (`REPID_RETRACT1`) | Weigh retracted ratings; a "Receipt without a rating" is only an interpretation signal (SPEC-003 RF-09) | The original rating is never deleted at the chain level; a rater can retract to reshape its perceived record |
++| **Self-corroboration** | A platform confirming its own receipt → `valid: false` (RF-O829) | Count **distinct** platforms (deduplication) | A platform that changes keys evades the rule (declared in the white paper §14) |
+ 
+ ### 7.2 Requirements (EARS)
+ 
+@@ -224,6 +242,8 @@ For each vector, this section distinguishes **what the protocol guarantees**, **
+ - **RF-S03** (Undesired Behavior): If a score is outside the 1–5 range, the system must mark it invalid.
+ - **RF-S04** (Prohibition): The protocol must not present any anti-sybil, anti-spam or anti-collusion mitigation as guaranteed if it depends on the interpretation layer.
+ - **RF-S05** (Ubiquity): The known limitations of §7.1 must be explicitly documented and must not be claimed as solved.
++- **RF-S06** (Undesired Behavior): If the confirming entity of a platform validation is `partyA` or `partyB` of the referenced Receipt, the system must mark the `PLATFORM_CONFIRMATION` invalid (self-corroboration).
++- **RF-S07** (Undesired Behavior): If a retraction references an unknown rating, was not signed by the original rater, or is a repeated retraction of the same rating, the system must mark the `RATING_RETRACTION` invalid.
+ 
+ ## 8. Interoperability and Extensibility
+ 
+@@ -292,7 +312,7 @@ this specification on purpose: the mapping changes as the reference
+ implementation is refactored, and a normative document must not churn for
+ non-normative reasons.
+ 
+-Two facts belong here because they constrain what any implementation may claim:
++Three facts belong here because they constrain what any implementation may claim:
+ 
+ - The covenant **ABI has no automated regression coverage.** The mock-based unit
+   tests that provided it were removed. Conformance of a covenant is therefore
+@@ -300,6 +320,11 @@ Two facts belong here because they constrain what any implementation may claim:
+ - The **compiler-emitted artifact fingerprint is not a conformance anchor**: it
+   does not change when a contract changes (SPEC-005 §6). Use
+   `tools/check-artifacts.mjs`.
++- The **identity-vault burn delay (RF-O831) is specified for `0.4.0` but is
++  neither compiled nor VM-executed in the lote 2 audit** (task E pending). The
++  bytecode registry in `protocol/covenant-bytecode.json` carries a placeholder
++  for the `0.4.0` identity vault, explicitly marked as pending; no implementation
++  may present it as verified evidence.
+ 
+ ## Out of Scope
+ 
+@@ -308,19 +333,20 @@ Two facts belong here because they constrain what any implementation may claim:
+ - Resolution of the `pkh → Identity` link.
+ - Multi-party interactions (>2); multi-party receipts.
+ - Private-key recovery or identity revocation without burn.
+-- Disputes, interaction cancellation and ratings with free text.
++- Disputes, interaction cancellation and rating comments with free text (only the `commentHash` of a comment travels on-chain; the comment itself never does).
+ - Production persistence and deployment network choice.
+ 
+ ## Acceptance Criteria (Definition of Done)
+ 
+ - [x] The nine protocol sections (principles, model, events, on-chain rules, verification, reputation, security, interoperability, conformance) are specified.
+-- [x] The seven §3 events have a normative field schema, published as `protocol/schemas/repid-fact.schema.json` and checked by `conformance/schema.test.mjs` against the five facts reconstructed from a real Chipnet run.
+-- [x] The §4 on-chain invariants are backed by the covenants and their real-VM evidence, with the loss of mock-based ABI regression coverage declared (see `REFERENCE-IMPLEMENTATION.md` §3).
++- [x] The eight §3 events have a normative field schema, published as `protocol/schemas/repid-fact.schema.json` and checked by `conformance/schema.test.mjs` against the five facts reconstructed from a real Chipnet run. (`RATING_RETRACTION`, `receiptContext` and `commentHash` are new in `0.4.0`; their vectors are scheduled for task E.)
++- [x] The §4 on-chain invariants are backed by the covenants and their real-VM evidence, with the loss of mock-based ABI regression coverage declared (see `REFERENCE-IMPLEMENTATION.md` §3). The `0.4.0` burn delay (RF-O831) is specified but not yet compiled (Annex B.2).
+ - [x] The facts/interpretation boundary is declared, and reputation and the Confidence Index are marked non-normative and owned by the application layer (SPEC-007, in the demo repository).
+ - [x] The RF → code → test matrix references real tests and states the limits of each kind of evidence.
+ - [x] SPEC-008 prevails over the other specifications in case of conflict (precedence note).
+-- [x] Protocol version is explicit and machine-readable (`protocol/protocol-version.json`, SPEC-010), currently `0.2.0` with stated promotion criteria.
+-- [x] Conformance suite green: `npm test` → 23 tests, 0 failures, running unconditionally. Covenant artifacts reproduce under `npm run artifacts:check`.
++- [x] Protocol version is explicit and machine-readable (`protocol/protocol-version.json`, SPEC-010), currently `0.3.0` with stated promotion criteria; `0.4.0` is the audited breaking step (SPEC-010 §2).
++- [x] Conformance suite green: `npm test` → 41 tests, 0 failures, running unconditionally. Covenant artifacts reproduce under `npm run artifacts:check`.
++- [ ] Lote 2 (`0.4.0`): `RATING_RETRACTION`, the receipt interaction context, `REPID_RATING2`/`commentHash`, self-corroboration invalidation and the identity-vault burn delay all have executable conformance vectors (task E — not executed).
+ - [x] Every contract artifact recompiles to the committed bytecode, ABI, embedded source and debug bytecode, verified by a negative test that the check actually fails on a modified contract.
+ - [ ] An independent implementation has verified these rules end to end. Until it does, the protocol stays at `0.y.z` (SPEC-010 §2).
+ - [ ] The code complies with `constitution.md`.
+\ No newline at end of file

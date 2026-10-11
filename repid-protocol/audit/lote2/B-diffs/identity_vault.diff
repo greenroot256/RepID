@@ -1,0 +1,31 @@
+diff --git a/contracts/identity_vault.cash b/contracts/identity_vault.cash
+index a9e2abc..40e1bd4 100644
+--- a/contracts/identity_vault.cash
++++ b/contracts/identity_vault.cash
+@@ -25,6 +25,9 @@ pragma cashscript ^0.13.0;
+ //                         and ALL the balance returns to the owner's P2PKH.
+ //                         The identity loses validity; the owner can mint a
+ //                         new one (new genesis, new category) if they want.
++//                         0.4.0: requires the vault to have existed for at
++//                         least `identityVault.minBurnDelayBlocks` (144)
++//                         blocks before it can be destroyed (RF-O831).
+ //
+ // Design note: the covenant does not remember "how much collateral" in a
+ // state variable; it infers it from the value (`satoshis`) of the UTXO
+@@ -92,6 +95,16 @@ contract IdentityVault(bytes20 ownerPkh) {
+         require(hash160(pk) == ownerPkh);
+         require(checkSig(s, pk));
+ 
++        // 0.4.0 (RF-O831): minimum lifetime before the collateral can walk
++        // away — counterparties get a window to read the identity first. This
++        // 0.4.0 body is NOT compiled or VM-verified yet (task E); the 0.3.0
++        // body remains the compiled canonical bytecode
++        // (protocol/covenant-bytecode.json). The delay binds by covenant, not
++        // by indexer: burn is impossible below this age, whatever an indexer
++        // claims. Value read from protocol/constants.json
++        // `identityVault.minBurnDelayBlocks` (144).
++        require(this.age >= 144);
++
+         bytes category = tx.inputs[this.activeInputIndex].tokenCategory;
+ 
+         // 1) The NFT MUST NOT reappear in any output: implicit burn.

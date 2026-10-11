@@ -1,0 +1,73 @@
+diff --git a/spec/SPEC-004-rating-protocol.md b/spec/SPEC-004-rating-protocol.md
+index ee0732b..8e27921 100644
+--- a/spec/SPEC-004-rating-protocol.md
++++ b/spec/SPEC-004-rating-protocol.md
+@@ -2,7 +2,7 @@
+ 
+ ## 1. Context and Objective
+ 
+-Once an Interaction Receipt has been issued, each party holds a Rating Right: the right to rate the other party exactly once. The protocol leverages the single-spend semantics of a UTXO to guarantee "one rating per participant" without additional covenant logic.
++Once an Interaction Receipt has been issued, each party holds a Rating Right: the right to rate the other party exactly once. Both rights are locked by the Receipt's genesis to the P2SH32 hashes of the `RatingRightVault` covenant (SPEC-008 RF-O822/RF-O825); that covenant exposes a single spend path that destroys the NFT (SPEC-008 RF-O823), which makes the "one rating per participant" guarantee a chain-level covenant rule (SPEC-008 RF-S01), not a single-spend assumption.
+ 
+ ## 2. User Stories
+ 
+@@ -11,34 +11,47 @@ Once an Interaction Receipt has been issued, each party holds a Rating Right: th
+ 
+ ## 3. Functional Requirements (EARS Syntax)
+ 
+-- **RF-01** (Ubiquity): The system must represent each Rating Right as a single-use UTXO.
+-- **RF-02** (Events): When the owner of a Rating Right spends the UTXO, the system must include an `OP_RETURN` payload with the rating (integer score between 1 and 5).
+-- **RF-03** (Ubiquity): The system must implicitly burn the Rating Right NFT upon spend, guaranteeing that only one rating can be issued per participant.
+-- **RF-04** (Undesired Behavior): If the score included in the `OP_RETURN` is outside the 1–5 range, then the system must consider the transaction invalid.
+-- **RF-05** (Ubiquity): The system must record the Rating Right commitment using the owner's pkh, instead of the full Identity NFT category.
++- **RF-01** (Ubiquity): The system must represent each Rating Right as a single-use covenant UTXO: `RatingRightVault` instantiated with the holder's `pkh` (SPEC-008 RF-O822), so the right cannot be transferred or re-emitted (SPEC-008 RF-O823).
++- **RF-02** (Events): When the holder spends its Rating Right in rating mode, the system must include an `OP_RETURN` payload with the rating — an integer score between 1 and 5 (`REPID_RATING1`, optionally `REPID_RATING2` when a `commentHash` accompanies it, SPEC-009 §4.1/§4.2).
++- **RF-03** (Ubiquity): The system must burn the Rating Right NFT on the covenant's only spend path (SPEC-008 RF-O823), guaranteeing that only one rating can be issued per participant per Receipt at the chain level (SPEC-008 RF-S01).
++- **RF-04** (Undesired Behavior): If the score included in the rating `OP_RETURN` is outside the 1–5 range, then the system must recognize the `RATING_ISSUED` with `valid: false` (it is not silently ignored; enforced by the conditional in `protocol/schemas/repid-fact.schema.json`). Applies to `REPID_RATING1` and `REPID_RATING2` alike.
++- **RF-05** (Ubiquity): The system must record each Rating Right's commitment using the **counterparty's** `pkh` — the cross pair: `partyA`'s right carries `partyB`'s pkh and vice versa (SPEC-008 RF-O822) — instead of the full Identity NFT category.
++- **RF-06** (Events): When a rater wants to retract a rating it already issued, the system must record a `RATING_RETRACTION` as an independent fact: the rater spends its own P2PKH UTXO with `REPID_RETRACT1` (SPEC-009 §4.5) referencing the txid of the rating's Receipt. The retraction is unilateral: it needs no consent from the ratee and no second Rating Right (the original rating path already destroyed the NFT).
++- **RF-07** (Undesired Behavior): If the `REPID_RETRACT1` reference is unknown, the spender is not the signer of the original rating, or a retraction for that rating already exists, then the system must recognize the `RATING_RETRACTION` with `valid: false`. The original `RATING_ISSUED` is never deleted; the chain records, it does not rescind (SPEC-010).
++- **RF-08** (Events): When the holder spends its Rating Right with `REPID_RATING2`, the system must decode the score (1–5) and the attached `commentHash` (32 bytes) into the `RATING_ISSUED` fact.
++- **RF-09** (Ubiquity): The system must never decode, store or judge the comment behind `commentHash`; verifying the correspondence between hash and comment is off-chain work for the application that knows the preimage (`REPID-CMT-V1`).
+ 
+ ## 4. Non-Functional Requirements
+ 
+-- The Rating Right spend is implemented as a standard P2PKH spend — it requires no dedicated covenant, which simplifies the implementation (see `constitution.md`, Article 2).
++- The Rating Right is a covenant, not a bare P2PKH: `RatingRightVault` (SPEC-008 RF-O822) — its single spend path destroys the NFT and requires the holder's signature (SPEC-008 RF-O824), so the "one rating" guarantee lives at the chain level; no wallet can re-emit the same NFT.
++- The covenant never reads the rating's `OP_RETURN` (SPEC-008 RF-O824); tag, score and references are recognized by the Indexer (SPEC-009).
++- A retraction is unilateral and cheap to express: one P2PKH spend plus an `OP_RETURN`, no Rating Right required.
+ - The Indexer must be able to detect the `OP_RETURN` and decode the score unambiguously.
+ 
+ ## 5. Edge Cases and Constraints
+ 
+-**Design decision:**
+-- RF-05: the Rating Right commitment uses the owner's pkh (not the full Identity NFT category). The pkh → Identity link (RFC-001) is resolved in a later, off-chain layer (per Article 1 of the Constitution).
++**Design decisions:**
++- RF-05: the Rating Right commitment uses the **counterparty's** pkh (the cross pair), not the owner's. `partyA`'s right carries `partyB`'s pkh and vice versa; the pkh → Identity link (RFC-001) is resolved in a later, off-chain layer (per Article 1 of the Constitution).
++- RF-06: a retraction is a **new** fact, not a mutation of the rating. The rater can only retract once per rating because the retraction is keyed by the rating's Receipt txid (RF-07); a genuine re-rating requires a new Interaction Receipt.
++- RF-08/RF-09: the `commentHash` travels on-chain but the comment stays off-chain; the hash commits the parties to a verifiable text without paying for storage or content review.
+ 
+ - `addOpReturnOutput` treats strings as UTF-8 unless they are prefixed with `"0x"` — a risk of encoding the score incorrectly if the prefix is not used.
+ - A score outside the 1–5 range is recognized but marked `valid: false` by the recognizer; it is not silently ignored (RF-04, and enforced by the conditional in `protocol/schemas/repid-fact.schema.json`).
++- An empty `commentHash` is equally valid: `RATING_ISSUED` without a comment is the legacy and default form.
+ 
+ ## 6. Out of Scope
+ 
+ - On-chain reputation aggregation algorithms (composite score computation, averages, weights).
+-- Disputes or challenges to an already-issued rating.
+-- Ratings with free text or comments (only the numeric score 1–5 is admitted in this phase).
++- Disputes or challenges to an already-issued rating (a retraction is a new fact that interpreters weigh, never a mutation).
++- Free text inside the `OP_RETURN` payload: only the numeric score 1–5 is admitted, plus — with `REPID_RATING2` — its `commentHash`; the comment itself lives off-chain and is never validated on-chain (RF-09).
++- App-level policy on what a retraction means for a given score (withdrawal of the rating, revocation of the interaction claim) — that is interpretation (SPEC-007), not protocol.
+ 
+ ## 7. Acceptance Criteria (Definition of Done)
+ 
+-- [x] `ISSUED_RATING` implemented: P2PKH spend with a score `OP_RETURN`, implicit NFT burn.
++- [x] `ISSUED_RATING` implemented: Rating Right spend with a score `OP_RETURN`, NFT burn enforced by the covenant.
+ - [x] Explicit score-range validation (RF-04) covered by a test (scores 0, 6 and 200 marked invalid; TASK-008).
+ - [x] Section 5 assumption confirmed by the project architect: commitment with the owner's pkh (TASK-003).
++- [ ] RF-05 corrected to the cross pair (counterparty's pkh) confirmed by the project architect (lote 2, task B).
++- [ ] RF-06/RF-07 (`RATING_RETRACTION`: unilateral reference, `valid: false` on unknown/wrong-signer/repeated) covered by conformance vectors (task E — not executed).
++- [ ] RF-08/RF-09 (`REPID_RATING2` → `commentHash` in `RATING_ISSUED`; comment never decoded) covered by conformance vectors (task E — not executed).
+ - [ ] The code complies with `constitution.md`.
+\ No newline at end of file

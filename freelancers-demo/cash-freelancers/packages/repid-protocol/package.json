@@ -1,0 +1,16 @@
+{
+  "name": "@repid/protocol",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RepID protocol constants and normative specs (SPEC-005 indexer, SPEC-007 confidence index, SPEC-008 normative core, SPEC-009 wire format). Vendored into the cash-freelancers monorepo from the reference implementation; kept byte-identical to upstream so it can be diffed against it. NOTE: the `@repid` scope here is deliberate and differs from the `@cash-freelancers` scope used by this repo's own packages, to preserve provenance.",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "spec/"
+  ],
+  "license": "ISC"
+}

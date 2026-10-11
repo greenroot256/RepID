@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+.turbo/
+.env
+.env.local
+*.log
+
+# Local test data. Contains private keys for the throwaway Chipnet wallets
+# in scripts/generate-test-wallets.ts (WIFs are stored in data/test-wallets.json)
+# and the RepID indexer store built during an end-to-end run. None of this may
+# ever be committed.
+data/

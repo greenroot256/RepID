@@ -1,0 +1,31 @@
+# Normalize line endings: this code is read and diffed constantly, and a CRLF/LF
+# mix produces diffs that hide real changes. The protocol repository uses the same
+# rule, so a file moved between the two does not show as entirely rewritten.
+* text=auto eol=lf
+
+# Source, docs and configuration: treat as text, always LF.
+*.md    text eol=lf
+*.json  text eol=lf
+*.ts    text eol=lf
+*.mjs   text eol=lf
+*.js    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+
+# The synced protocol inputs are byte-for-byte copies from another repository.
+# git must not renormalize them, because scripts/check-drift.mjs compares their
+# SHA-256 against the originals and a line-ending change would read as drift
+# that does not exist.
+src/protocol/*.json          -text
+src/protocol/schemas/*.json  -text
+test/fixtures/*.json         -text
+
+# Lockfiles are compared line by line across platforms; keep them stable.
+package-lock.json text eol=lf
+
+# Binary that must never be transformed.
+*.png binary
+*.jpg binary
+*.pdf binary

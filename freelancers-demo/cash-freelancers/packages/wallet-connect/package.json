@@ -1,0 +1,20 @@
+{
+  "name": "@cash-freelancers/wallet-connect",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@walletconnect/sign-client": "^2.25.0",
+    "@walletconnect/types": "^2.25.0",
+    "@cash-freelancers/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json"
+  }
+}

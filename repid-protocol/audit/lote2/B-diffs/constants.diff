@@ -1,0 +1,77 @@
+diff --git a/protocol/constants.json b/protocol/constants.json
+index 510fac2..fc06271 100644
+--- a/protocol/constants.json
++++ b/protocol/constants.json
+@@ -9,6 +9,16 @@
+       "value": "REPID_RATING1",
+       "lengthBytes": 13
+     },
++    "RATING2": {
++      "$comment": "SPEC-004 RF-08. Same single-use Rating Right spend, adds a 32-byte commentHash (see commentHash below).",
++      "value": "REPID_RATING2",
++      "lengthBytes": 13
++    },
++    "RETRACT": {
++      "$comment": "SPEC-004 RF-06/RF-07. Unilateral rating retraction; payload is the referenced Receipt txid (32 bytes, display order).",
++      "value": "REPID_RETRACT1",
++      "lengthBytes": 14
++    },
+     "PLATFORM": {
+       "value": "REPID_PLATFORM1",
+       "lengthBytes": 15
+@@ -36,7 +46,34 @@
+     "PKH": 20,
+     "TXID": 32,
+     "CATEGORY": 32,
+-    "SCORE": 1
++    "SCORE": 1,
++    "COMMENT_HASH": 32
++  },
++
++  "receiptCommitment": {
++    "$comment": "SPEC-003 RF-08 / SPEC-009 §9.2. Optional interaction context in the Receipt's NFT commitment. 4-byte form: 0x10 · category · roleA · roleB. 36-byte form: 0x11 · category · roleA · roleB · contextHash (32 bytes). The empty commitment is the legacy form. Any other length is not a fact (SPEC-009 RF-W73).",
++    "LEGACY_LENGTH": 0,
++    "CONTEXT_LENGTH": 4,
++    "CONTEXT_WITH_HASH_LENGTH": 36,
++    "CONTEXT_HASH_LENGTH": 32,
++    "FORMAT_BYTE_CONTEXT": "0x10",
++    "FORMAT_BYTE_CONTEXT_WITH_HASH": "0x11",
++    "preimage": {
++      "$comment": "contextHash := SHA256('REPID-RCTX-V1' ‖ metadata). 'REPID-RCTX-V1' is 12 ASCII bytes (0x52455049442d524354582d5631). metadata is the app-defined UTF-8 payload agreed by both parties, delivered off-chain, never salted.",
++      "prefix": "REPID-RCTX-V1",
++      "prefixBytes": 12
++    }
++  },
++
++  "commentHash": {
++    "$comment": "SPEC-004 RF-08/RF-09. REPID_RATING2 attaches a 32-byte commentHash to the score. The comment itself is never on-chain; hash fidelity is an off-chain claim. commentHash := SHA256('REPID-CMT-V1' ‖ raterPkh(20) ‖ saltLen(1 byte) ‖ salt ‖ comment), saltLen 16..32.",
++    "lengthBytes": 32,
++    "preimage": {
++      "prefix": "REPID-CMT-V1",
++      "prefixBytes": 12,
++      "SALT_MIN_LENGTH": 16,
++      "SALT_MAX_LENGTH": 32
++    }
+   },
+ 
+   "factTypes": [
+@@ -45,6 +82,7 @@
+     { "type": "IDENTITY_BURNED", "spec": "SPEC-001", "hasValidityField": true },
+     { "type": "RECEIPT_GENESIS", "spec": "SPEC-003", "hasValidityField": false },
+     { "type": "RATING_ISSUED", "spec": "SPEC-004", "hasValidityField": true },
++    { "type": "RATING_RETRACTION", "spec": "SPEC-004", "hasValidityField": true },
+     { "type": "PLATFORM_CONFIRMATION", "spec": "SPEC-003", "hasValidityField": true },
+     { "type": "TRUST_LINK", "spec": "SPEC-006", "hasValidityField": true }
+   ],
+@@ -75,6 +113,11 @@
+     }
+   },
+ 
++  "identityVault": {
++    "$comment": "SPEC-008. burn() requires this.age >= 144 blocks (~24 h). Not compiled nor VM-executed for 0.4.0 (task E pending).",
++    "minBurnDelayBlocks": 144
++  },
++
+   "outOfScope": {
+     "$comment": "Values that are often mistaken for protocol constants but belong to the application layer. They MUST NOT be added to this file.",
+     "DEFAULT_IDENTITY_COLLATERAL": "application default (demo server), not a protocol invariant",

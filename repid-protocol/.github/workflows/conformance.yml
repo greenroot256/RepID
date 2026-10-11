@@ -1,0 +1,57 @@
+name: conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: specifications, conformance and covenants
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 1. Structural and referential integrity of spec/.
+      #    Catches a specification pointing at a file that does not exist, which
+      #    is how the protocol repository was seeded with 46 dead links.
+      - name: Check specifications
+        run: npm run specs:check
+
+      # 2. The conformance suite: fact schema, constants, negative cases.
+      - name: Run conformance suite
+        run: npm test
+
+      # 3. Every covenant recompiles to the committed artifact.
+      #    cashc is pinned in devDependencies, so this is reproducible rather
+      #    than dependent on whatever happens to be installed.
+      - name: Check contract artifacts
+        run: npm run artifacts:check
+
+      - name: Verify line endings and absence of encoding damage
+        run: |
+          # A U+FFFD in a normative document is silent corruption: it renders as
+          # a replacement character and the surrounding text keeps looking
+          # almost right.
+          if grep -rlP '\x{FFFD}' --include='*.md' --include='*.json' --include='*.mjs' --include='*.cash' \
+               --exclude-dir=node_modules --exclude-dir=.git . ; then
+            echo "::error::found U+FFFD (replacement character) in a tracked file"
+            exit 1
+          fi
+          echo "no U+FFFD found"
+          if grep -rlP '\r$' --include='*.md' --include='*.json' --include='*.mjs' --include='*.cash' \
+               --exclude-dir=node_modules --exclude-dir=.git . ; then
+            echo "::error::found CRLF line endings; .gitattributes requires LF"
+            exit 1
+          fi
+          echo "line endings are LF"

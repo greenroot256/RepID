@@ -1,0 +1,385 @@
+diff --git a/WHITE-PAPER.md b/WHITE-PAPER.md
+index a302ee3..a1bfaab 100644
+--- a/WHITE-PAPER.md
++++ b/WHITE-PAPER.md
+@@ -28,11 +28,12 @@ and leaves the judgment to you.**
+ **The blockchain stores immutable facts. The interpretation of those facts
+ stays off-chain.**
+ 
+-This single decision is what RepID is. RepID writes seven kinds of things into
++This single decision is what RepID is. RepID writes eight kinds of things into
+ the Bitcoin Cash blockchain: that an identity was created, that its collateral
+ was increased, that it was burned, that a receipt was issued for an interaction,
+-that a rating was given, that a platform corroborated that interaction, and that
+-one person declared trust in another.
++that a rating was given, that a rating was subsequently retracted by the same
++rater, that a platform corroborated that interaction, and that one person
++declared trust in another.
+ 
+ What it deliberately does **not** write is a verdict. How reputable someone is,
+ how much their word is worth, how their ratings should be weighted — none of
+@@ -74,7 +75,10 @@ RepID's answers are structural rather than procedural:
+    the Bitcoin Virtual Machine.
+ 2. No on-chain artifact may contain a value judgment. Scores stay off-chain.
+ 3. Facts are never edited or deleted. Something can *become invalid* without its
+-   history disappearing.
++   history disappearing. Since `0.4.0`, a rating can be **retracted**: the
++   original fact stays on the chain, and a new fact — `RATING_RETRACTION`, an
++   `OP_RETURN` spent by the same rater — counters it. Correct without erasing;
++   the verdict stays with whoever interprets the facts.
+ 4. Every fact has a published, byte-level definition, so "a fact" is a
+    testable claim rather than a judgement call.
+ 
+@@ -179,9 +183,9 @@ transaction.
+ 
+ ---
+ 
+-## 5. The seven facts
++## 5. The eight facts
+ 
+-The protocol defines exactly seven fact types. A **fact** is a structured record
++The protocol defines exactly eight fact types. A **fact** is a structured record
+ reconstructed from a transaction; the fields below are normative, and they are
+ also published as a machine-readable JSON Schema.
+ 
+@@ -192,8 +196,9 @@ also published as a machine-readable JSON Schema.
+ | 3 | `IDENTITY_BURNED` | An identity was burned |
+ | 4 | `RECEIPT_GENESIS` | A receipt and its two Rating Rights were created |
+ | 5 | `RATING_ISSUED` | A rating was given, by whom, to whom, and with what score |
+-| 6 | `PLATFORM_CONFIRMATION` | A platform corroborated that an interaction occurred |
+-| 7 | `TRUST_LINK` | One person declared trust in another |
++| 6 | `RATING_RETRACTION` | A rater unilaterally retracted one of its earlier ratings |
++| 7 | `PLATFORM_CONFIRMATION` | A platform corroborated that an interaction occurred |
++| 8 | `TRUST_LINK` | One person declared trust in another |
+ 
+ **The full field set of each fact:**
+ 
+@@ -204,9 +209,15 @@ also published as a machine-readable JSON Schema.
+ - **`IDENTITY_BURNED`** — `txid`, `identityCategory`, `ownerPkh`,
+   `spentOutpoint`, `valid`.
+ - **`RECEIPT_GENESIS`** — `txid`, `receiptCategory`, `receiptOwnerPkh`,
+-  `ratingRights[]` with two entries of `{outpoint, ownerPkh, ratesPkh}`.
++  `ratingRights[]` with two entries of `{outpoint, ownerPkh, ratesPkh}`; in
++  `0.4.0` it may also carry `receiptContext` (`interactionCategory`, `roleA`,
++  `roleB`, optional `contextHash`).
+ - **`RATING_ISSUED`** — `txid`, `spentOutpoint`, `raterPkh`, `rateePkh`,
+-  `score`, `valid`.
++  `score`, `valid`; under the `REPID_RATING2` container it also carries
++  `commentHash`.
++- **`RATING_RETRACTION`** — `txid`, `raterPkh`, `receiptTxid`, `valid` (the
++  receipt whose rating is being retracted). The original `RATING_ISSUED` is
++  never deleted; the chain records, it does not rescind.
+ - **`PLATFORM_CONFIRMATION`** — `txid`, `platformPkh`, `receiptTxid`, `valid`.
+ - **`TRUST_LINK`** — `txid`, `trusterPkh`, `trustedPkh`, `valid`.
+ 
+@@ -218,6 +229,10 @@ also published as a machine-readable JSON Schema.
+ - The receipt genesis is the **only** event that creates Rating Rights.
+ - A rating exists **only** if it spends a Rating Right. The right's holder is the
+   rater; the counterparty named in the right is the ratee.
++- A rating retraction references the rating of **one** receipt, is unilateral
++  (only the rater can spend its own funds with `REPID_RETRACT1`), and can
++  retract a given rating at most once. Retracting does not delete the rating; it
++  publishes a counter-fact that interpreters weigh.
+ - A platform confirmation is valid only if the receipt it references is already
+   known to the indexer.
+ - A Trust Link is independent of everything else: it needs no prior identity and
+@@ -280,6 +295,11 @@ The collateral is a self-custodied economic commitment, not a fee to anyone. It
+ stays under the owner's own control and returns to them intact if they burn the
+ identity.
+ 
++Since `0.4.0`, `burn` also requires the vault to have lived for **144 blocks**
++(about a day on BCH) before it can be destroyed, giving counterparties a window
++to read the identity before its collateral can walk away. The delay is enforced
++by the covenant itself (`this.age`, SPEC-008 RF-O831), not by the indexer.
++
+ ### 6.3 `IdentityGenesisValidator` — the legacy form
+ 
+ An earlier, simpler form locked the identity token straight to a P2PKH output
+@@ -294,20 +314,27 @@ signatures**, and it creates three tokens at once:
+ 
+ | Output | What it is | Commitment |
+ |---|---|---|
+-| 0 | The receipt itself, locked to party A | *empty* |
++| 0 | The receipt itself, locked to party A | *empty*, or an interaction context (`0.4.0`) |
+ | 1 | Party A's Rating Right, locked to party A | party B's public-key hash |
+ | 2 | Party B's Rating Right, locked to party B | party A's public-key hash |
+-| 3 | Change back to party A | *no tokens* |
++| 3 | Change back to party A (four-output form only; a three-output genesis has no change) | *no tokens* |
+ 
+ The **cross pattern** in the commitments is the mechanism: a Rating Right is
+ literally "my right to rate that specific person", and the other party cannot
+ forge it, because creating it required their own signature.
+ 
++Since `0.4.0`, the receipt may also carry an **interaction context** in its own
++commitment: a 4-byte form (`0x10` — interaction category plus the two roles) or
++a 36-byte form (`0x11` — adding a context hash). The category and the roles
++travel on-chain; what those bytes *mean* for the two parties stays off-chain,
++declared by the interaction protocol (SPEC-009 §9.2, RF-W73).
++
+ No custom "consume once" logic is needed for the Rating Rights. They are
+-ordinary single-output tokens, and Bitcoin Cash already forbids spending a UTXO
+-twice. **Spending the right *is* the rating, and it *is* the destruction of the
+-right** — one rating per party per interaction, enforced by the chain itself
+-rather than by a contract.
++single-output tokens locked inside the **`RatingRightVault`** covenant, a P2SH32
++contract address (SPEC-008 RF-O822/RF-O825), and Bitcoin Cash already forbids
++spending a UTXO twice. **Spending the right *is* the rating, and it *is* the
++destruction of the right** — one rating per party per interaction, enforced by
++the chain itself rather than by extra covenant logic.
+ 
+ ### 6.5 Ratings, platform confirmations and trust links
+ 
+@@ -316,7 +343,8 @@ includes a small, precisely formatted data output:
+ 
+ | Fact | Who spends | What it declares |
+ |---|---|---|
+-| Rating | The holder of a Rating Right | A score from 1 to 5 |
++| Rating | The holder of a Rating Right | A score from 1 to 5, plus (under `REPID_RATING2`) the hash of an off-chain comment |
++| Rating retraction | A rater, using its own funds | "I retract my earlier rating of this receipt" |
+ | Platform confirmation | A validating platform, using its own funds | "I corroborate that the receipt with this transaction id happened" |
+ | Trust Link | Any wallet, using its own funds | "I declare trust in this public-key hash" |
+ 
+@@ -339,11 +367,12 @@ specifies the encoding **byte by byte**, so that an independent implementation
+ can produce and read the same bytes.
+ 
+ `OP_RETURN` is the Bitcoin script opcode that marks an output as
+-non-spendable data. RepID uses it for the three *declared* facts. The two
+-*genesis* facts — identity creation and receipt creation — carry no data output
+-at all; they are recognized from the structure of their outputs, which is
+-arguably stronger, because the structure is enforced by the token standard and
+-the VM.
++non-spendable data. RepID uses it for the declared facts — ratings (two tags,
++one fact), platform confirmations, trust links and, since `0.4.0`, rating
++retractions. The two *genesis* facts — identity creation and receipt creation —
++carry no data output at all; they are recognized from the structure of their
++outputs, which is arguably stronger, because the structure is enforced by the
++token standard and the VM.
+ 
+ ### 7.1 The container
+ 
+@@ -367,20 +396,33 @@ reader is how a look-alike gets mistaken for a fact:
+ - The number of chunks and the exact length of each are validated **before**
+   anything is read out of them. Chunks are never concatenated first.
+ 
+-### 7.2 The three tags and their payloads
++The same strict reading applies to the `0.4.0` payloads: `REPID_RATING2`
++requires exactly three chunks whose third is exactly 32 bytes, and
++`REPID_RETRACT1` exactly two with the second exactly 32 bytes — anything else is
++no fact (SPEC-009 §4.2, §4.5).
++
++### 7.2 The five tags and their payloads
+ 
+ | Tag | Tag length | Chunks | Payload | Meaning |
+ |---|---|---|---|---|
+ | `REPID_RATING1` | 13 bytes | exactly 2 | exactly 1 byte | The score, 1–5 |
++| `REPID_RATING2` | 13 bytes | exactly 3 | exactly 1 + 32 bytes | The score, 1–5, plus a hash of an off-chain comment |
+ | `REPID_PLATFORM1` | 15 bytes | exactly 2 | exactly 32 bytes | The transaction id of the receipt |
++| `REPID_RETRACT1` | 14 bytes | exactly 2 | exactly 32 bytes | The transaction id of the rated receipt whose rating is retracted |
+ | `REPID_TRUST1` | 12 bytes | exactly 2 | exactly 20 bytes | The trusted party's public-key hash |
+ 
+-A detail worth pausing on: **the rating payload is a single byte and contains no
+-addresses.** The rater and the ratee are not stated in the data output at all.
+-They are recovered from the Rating Right that the transaction spends — whose
+-holder is the rater and whose commitment names the ratee. Any implementation
+-that tried to read the participants out of the rating payload would be
+-non-conformant, and the specification says so explicitly.
++A detail worth pausing on: **the `REPID_RATING1` payload is a single byte and
++contains no addresses** — `REPID_RATING2` adds a 32-byte `commentHash` to the
++same one-byte score. The rater and the ratee are not stated in the data output
++at all. They are recovered from the Rating Right that the transaction spends —
++whose holder is the rater and whose commitment names the ratee. Any
++implementation that tried to read the participants out of the rating payload
++would be non-conformant, and the specification says so explicitly.
++
++The comment behind a `commentHash` is **never on-chain**: it is delivered by
++agreement between the rater and whoever reads the fact, and the protocol commits
++to its hash so that "this comment was attached to this score" is checkable
++without being forged by whoever last touched the comment (SPEC-004 RF-08/RF-09).
+ 
+ ### 7.3 Who declared a platform confirmation or a trust link?
+ 
+@@ -407,10 +449,12 @@ value of output 0, and the identity is tracked at `txid:0`.
+ **Receipt genesis.** There must be three or four outputs. In the four-output
+ form, output 3 must be tokenless change. Outputs 0, 1 and 2 must each carry a
+ token with capability `none` and amount `0`, all three sharing one category. The
+-receipt in output 0 must have an **empty** commitment and be locked to party A;
+-the Rating Rights in outputs 1 and 2 must have **non-empty** commitments forming
+-the **cross** pair. A fourth output carrying a token is not change and is not
+-recognized.
++receipt in output 0 must have an **empty** commitment (the legacy form) or, in
++`0.4.0`, a 4-byte (`0x10`) or 36-byte (`0x11`) **interaction context**
++commitment (`RECEIPT_GENESIS` then carries `receiptContext`), and be locked to
++party A; the Rating Rights in outputs 1 and 2 must have **non-empty**
++commitments forming the **cross** pair. A fourth output carrying a token is not
++change and is not recognized.
+ 
+ > Source: `spec/SPEC-009-repid-wire-format-and-recognition.md` §3–§6, §9;
+ > `protocol/constants.json`; `spec/SPEC-008-repid-protocol.md` §4.7.
+@@ -436,15 +480,20 @@ The first rule that produces a fact wins:
+ 1. **Identity spend** → collateral top-up or burn
+ 2. **Identity genesis** → identity created
+ 3. **Receipt genesis** → receipt created
+-4. **Issued rating** → rating given
++4. **Issued rating** → rating given (the tag disambiguates `REPID_RATING1` and `REPID_RATING2`)
+ 5. **Platform confirmation** → corroborated
+-6. **Trust link** → trust declared
++6. **Rating retraction** → rating retracted
++7. **Trust link** → trust declared
+ 
+ The identity spend must be tried **before** the identity genesis, because adding
+ collateral re-issues the same token toward the same covenant and therefore has
+ the *same shape* as creating an identity. The only thing that tells them apart is
+ whether that outpoint was already being tracked.
+ 
++The retraction in step 6 needs the rating of the referenced receipt to have been
++seen, so it follows the rating recognizer; its tag is disjoint from every other
++recognizer's, so nothing else can claim it.
++
+ ### 8.2 The state an indexer must keep
+ 
+ The chain does not remember certain things, so an indexer has to. This state is
+@@ -453,6 +502,10 @@ small but mandatory:
+ - **Live Rating Rights** — which outputs are outstanding, and who they entitle.
+ - **Indexed receipt transaction ids** — so a platform confirmation can be checked.
+ - **Tracked vault outputs** — so a top-up can be distinguished from a mint.
++- **Receipt interaction contexts** — so the `0.4.0` context of a
++  `RECEIPT_GENESIS` stays available to later facts.
++- **The retracted ratings set** — so a repeated retraction of the same rating is
++  marked invalid deterministically.
+ 
+ On each fact, the indexer advances that state: it starts tracking a new
+ identity's vault output, **moves** tracking to the new output on a top-up,
+@@ -489,13 +542,17 @@ a well-formed container that breaks a rule, like a score of 9 — is still a fac
+ and is published with `valid: false`. It is never silently dropped, and the value
+ is never clamped: a 9 stays a 9, and the fact says it is not a valid rating.
+ 
+-The four cases where an invalid fact is published rather than hidden:
++The six cases where an invalid fact is published rather than hidden:
+ 
+ - A score outside 1–5.
+ - A collateral fact that does not preserve the token, or whose new collateral is
+   lower than the recorded one. In that case the indexer also refuses to advance
+   its tracking to the invalid state.
+ - A platform confirmation referencing a receipt it has not indexed.
++- A platform confirmation whose confirming platform is a party to the receipt it
++  corroborates (`0.4.0`).
++- A rating retraction that references an unknown rating, that is not signed by
++  the original rater, or that retracts an already-retracted rating (`0.4.0`).
+ - A Trust Link that declares trust in the declarer's own key.
+ 
+ > Source: `spec/SPEC-009-repid-wire-format-and-recognition.md` §5, §7, §8;
+@@ -522,13 +579,14 @@ RepID that is deliberately *not* regulated.
+    presented as a protocol fact.
+ 
+ **What is therefore possible, without any extension to the protocol.** From the
+-seven facts as defined, an interpreter can compute the number of ratings an
++eight facts as defined, an interpreter can compute the number of ratings an
+ identity has received; how many came from parties that themselves hold
+-identities; how much collateral an identity has committed and how long it has
+-held; how many counterparties have declared trust in an identity and how many
+-trust declarations it has itself made; how many interactions were corroborated
+-by a platform; and which of those interactions involved a repeat counterparty.
+-Each of these is arithmetic over facts that already exist.
++identities; how many of those ratings were later retracted by their rater; how
++much collateral an identity has committed and how long it has held; how many
++counterparties have declared trust in an identity and how many trust declarations
++it has itself made; how many interactions were corroborated by a platform; and
++which of those interactions involved a repeat counterparty. Each of these is
++arithmetic over facts that already exist.
+ 
+ **What is not possible, and would require changing the protocol rather than
+ writing a new application:** storing a reputation number on-chain, weighting
+@@ -563,6 +621,8 @@ not solve at all.
+ | **Reputation farming** | One rating per right, enforced by single-spend | Weighting by counterparty, recency, collateral | Nothing prevents several interactions that are each worth farming |
+ | **Selective acceptance** | A non-existent receipt produces no facts | — | If a party simply refuses to sign, there is no on-chain recourse |
+ | **Rating manipulation** | The score range is fixed; out-of-range values are marked invalid | Judging the intent behind a rating | The protocol cannot verify that a score is truthful |
++| **Retracting a rating** | A retraction is itself a fact: who retracted, which rating, and when, signed by the original rater | Weighing why a rating was retracted | A false retraction is as unverifiable as a false rating |
++| **Self-corroboration** | Since `0.4.0`, a platform confirming a receipt it is a party to is marked invalid | — | A second key under the same operator still evades the rule |
+ 
+ The rule that follows from this table is part of the protocol's conformity
+ requirements: **an implementation may not present an anti-sybil, anti-spam or
+@@ -587,7 +647,7 @@ must fail loudly rather than operate on a version it does not implement.
+ 
+ **What a version covers** — everything an independent implementation must agree
+ on in order to reach the same conclusion about a transaction: the data-output
+-tags and encoding, the field schema of all seven facts, the recognition and
++tags and encoding, the field schema of all eight facts, the recognition and
+ validation rules, the on-chain invariants and covenant interfaces, and the score
+ range.
+ 
+@@ -598,9 +658,10 @@ implementations without affecting conformity.
+ 
+ **How the version of a fact's format is identified.** A fact's payload carries no
+ version string. The version lives in the **tag**: `REPID_RATING1`,
+-`REPID_PLATFORM1` and `REPID_TRUST1` all end in a revision digit, and that digit
+-is the version of the tag's encoding. A recognizer that has matched a tag
+-therefore already knows which rules govern the payload behind it.
++`REPID_RATING2`, `REPID_PLATFORM1`, `REPID_RETRACT1` and `REPID_TRUST1` all end
++in a revision digit, and that digit is the version of the tag's encoding. A
++recognizer that has matched a tag therefore already knows which rules govern the
++payload behind it.
+ 
+ This matters for safety. A tag whose revision an implementation does not know
+ matches nothing, and under the recognition rules that yields **no fact at all** —
+@@ -755,11 +816,11 @@ against the actual Virtual Machine rather than a simulator.
+ 
+ Stated plainly, because the project's own rules require it:
+ 
+-- Only **three of the seven** fact types — identity genesis, receipt genesis and
++- Only **three of the eight** fact types — identity genesis, receipt genesis and
+   rating issued — are covered by the real-network evidence held in this
+   repository. Collateral top-up, burn, platform confirmation and trust link are
+-  specified and tested, but are not all covered by real-VM evidence in the
+-  conformance fixtures.
++  specified and tested (and rating retraction is specified in `0.4.0`), but are
++  not all covered by real-VM evidence in the conformance fixtures.
+ - **The covenant interface has no automated regression coverage.** The
+   mock-based unit tests that provided it were removed. What was lost was
+   interface-shape regression coverage, not real-VM evidence, since the mock
+@@ -800,6 +861,9 @@ they are the boundaries of what RepID claims. None of them is a guarantee.
+   network's script execution; the indexer only reads what survived them.
+ - Order of appearance matters, so a platform confirmation seen before its
+   receipt is reported invalid.
++- `commentHash` and `contextHash` fidelity is not verifiable on-chain: the
++  recognizer reports the hashes exactly as spent; the correspondence with an
++  actual off-chain comment or context is an application claim.
+ 
+ **About evidence and tooling**
+ 
+@@ -818,9 +882,15 @@ they are the boundaries of what RepID claims. None of them is a guarantee.
+ 
+ - **Multi-party interactions are out of scope.** An interaction has exactly two
+   parties, and so does a receipt.
+-- **There is no on-chain dispute or cancellation mechanism.** A published fact
+-  stands. An identity can be burned, but a rating cannot be retracted.
+-- **Ratings carry no free text.** Only the score is recorded.
++- **There is no on-chain dispute mechanism.** A published fact stands. An
++  identity can be burned, and since `0.4.0` a rater can **retract** its own
++  rating — but the retraction is itself a published fact, not an erasure: the
++  original rating keeps its place in history and the interpreter weighs the
++  contradiction.
++- **Ratings carry no free text.** Only the score — and, since `0.4.0`, a hash of
++  an off-chain comment (`commentHash`) — is recorded. The comment text itself is
++  never on-chain, and hash fidelity (a different comment with the same hash) is
++  an application claim.
+ - **Key recovery and identity revocation without burning are out of scope.** An
+   identity is immutable and has no on-chain recovery mechanism: a lost private
+   key means an irremediably lost identity, together with the collateral locked
+@@ -850,7 +920,7 @@ with the first three.
+ | Document | What it gives you |
+ |---|---|
+ | `constitution.md` | The ten non-negotiable principles. Short, and it outranks everything else. |
+-| `spec/SPEC-008-repid-protocol.md` | The protocol itself: principles, model, the seven events, on-chain rules, verification, interpretation limits, security, interoperability, conformance. |
++| `spec/SPEC-008-repid-protocol.md` | The protocol itself: principles, model, the eight events, on-chain rules, verification, interpretation limits, security, interoperability, conformance. |
+ | `spec/SPEC-009-repid-wire-format-and-recognition.md` | The byte-level contract and the recognition algorithm. |
+ | `spec/SPEC-005-indexer-protocol.md` | What a recognizer must conclude, and from what state. |
+ | `spec/SPEC-010-protocol-versioning.md` | The version identifier and what would change it. |
+@@ -893,7 +963,7 @@ section introduces a rule, value or claim that is not traceable to one of them.
+ | 2. The problem | SPEC-008 §1, §2, §4.6, §7; `constitution.md` Arts. 1–2 |
+ | 3. Guiding principles | `constitution.md` Arts. 1–10 |
+ | 4. Who is involved | SPEC-008 §2, §2.1, Annex B.1 |
+-| 5. The seven facts | SPEC-008 §3, §3.1, §3.2, §8.1; `protocol/schemas/repid-fact.schema.json`; `protocol/constants.json` |
++| 5. The eight facts | SPEC-008 §3, §3.1, §3.2, §8.1; `protocol/schemas/repid-fact.schema.json`; `protocol/constants.json` |
+ | 6. On-chain components | `contracts/*.cash`; SPEC-008 §4.1–§4.5; SPEC-001; SPEC-003; SPEC-004 |
+ | 7. Wire format | SPEC-009 §3–§6, §9; SPEC-008 §4.7; `protocol/constants.json` |
+ | 8. Recognition | SPEC-009 §5, §7, §8; SPEC-008 §5, §5.1 |

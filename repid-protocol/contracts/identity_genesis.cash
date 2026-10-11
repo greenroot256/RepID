@@ -1,0 +1,47 @@
+pragma cashscript ^0.13.0;
+
+// RFC-001 — Identity Protocol
+//
+// IdentityGenesisValidator is a single-use covenant: it authorizes the
+// minting (genesis) of exactly one RepID Identity NFT and, in the same
+// spend, leaves it locked under a P2PKH controlled by the owner.
+// From there on the identity lives as an immutable NFT (capability "none")
+// on a common P2PKH UTXO — RepID does not run covenant logic on it again.
+// The on-chain fact (that it exists, who controls it) is immutable; the
+// interpretation (reputation) stays off-chain.
+contract IdentityGenesisValidator(bytes20 ownerPkh) {
+    function mint() {
+        // 1) CashTokens genesis rule: the spent UTXO must
+        //    come from vout 0 of its source transaction. Without this, the
+        //    genesis of a new token category is invalid at the consensus
+        //    level.
+        require(tx.inputs[this.activeInputIndex].outpointIndex == 0);
+
+        // 2) The new token category is the txid of the spent UTXO
+        //    itself (standard CashTokens rule). outpointTransactionHash
+        //    already comes in the same byte order as tokenCategory
+        //    (the "internal" order, not the reversed order shown by
+        //    explorers) — no reordering is required here.
+        bytes32 newCategory = tx.inputs[this.activeInputIndex].outpointTransactionHash;
+
+        // 3) Output 0: the freshly minted NFT — same genesis category,
+        //    capability "none" (immutable, hence no 0x01/0x02 suffix in
+        //    tokenCategory), no associated fungibles, locked to the owner's
+        //    P2PKH.
+        require(tx.outputs[0].tokenCategory == newCategory);
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+
+// 4) Output 1: P2PKH change to the owner. On a real network (Chipnet)
+        //    the funding UTXO has value; without a change output, almost
+        //    all of it would be lost to fees. The change must not carry
+        //    tokens minted in this transaction (the only tokens that can
+        //    exist here are of the newly created category): it closes
+        //    the door to additional hidden mints or value leak within
+        //    the same transaction.
+        require(tx.outputs.length == 2);
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].tokenCategory != newCategory);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+    }
+}

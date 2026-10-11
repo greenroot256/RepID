@@ -1,0 +1,100 @@
+diff --git a/spec/SPEC-005-indexer-protocol.md b/spec/SPEC-005-indexer-protocol.md
+index 37a8e42..168f442 100644
+--- a/spec/SPEC-005-indexer-protocol.md
++++ b/spec/SPEC-005-indexer-protocol.md
+@@ -86,9 +86,16 @@ silencing it would hide malicious or defective activity.
+ ### 4.3 Interaction and rating
+ 
+ - **RF-04** (Events): When a Receipt is minted together with two Rating Rights
+-  (three outputs of the same category, with an empty commitment in the first),
++  (three outputs of the same category, with a commitment in the first that is
++  empty or carries a 4-byte or 36-byte interaction context, SPEC-009 §9.2),
+   the recognizer MUST recognize a `RECEIPT_GENESIS` fact and register the two
+   Rating Right outpoints and the Receipt's own transaction identifier.
++- **RF-23** (Events): When the first output's commitment carries the interaction
++  context, the recognizer MUST include in the `RECEIPT_GENESIS` fact the
++  `interactionCategory`, `roleA` and `roleB` bytes and — for the 36-byte form —
++  the `contextHash`. It MUST NOT invent values when the commitment is empty, and
++  it MUST keep unknown `category`/`role` values raw (tolerant reading, SPEC-009
++  RF-W73).
+ - **RF-05** (Events): When a registered Rating Right is spent with an
+   `OP_RETURN` carrying the `REPID_RATING1` tag, the recognizer MUST recognize a
+   `RATING_ISSUED` fact carrying the rater (`raterPkh`), the ratee (`rateePkh`)
+@@ -96,6 +103,18 @@ silencing it would hide malicious or defective activity.
+ - **RF-06** (Undesired Behavior): If the score is outside the range declared in
+   `protocol/constants.json` (`MIN_SCORE`–`MAX_SCORE`, currently 1–5), the
+   recognizer MUST mark the fact invalid rather than ignore it.
++- **RF-24** (Events): When a registered Rating Right is spent with `REPID_RATING2`
++  (SPEC-009 §4.2), the recognizer MUST recognize a `RATING_ISSUED` fact carrying
++  the rater, the ratee, the score **and** the 32-byte `commentHash`; with
++  `REPID_RATING1` (without a hash) the `RATING_ISSUED` MUST be recognized
++  without that field.
++- **RF-25** (Events): When a wallet spends its own P2PKH UTXO with
++  `REPID_RETRACT1` (SPEC-009 §4.5) referencing the transaction identifier of a
++  Receipt, the recognizer MUST recognize a `RATING_RETRACTION` fact with the
++  spender (`raterPkh`) and the referenced identifier, and MUST add that reference
++  to the retracted set (RF-27) so that a repeated retraction of the same rating
++  is detected (SPEC-004 RF-07). If the referenced rating does not exist or was
++  not signed by the spender, the fact MUST be marked invalid.
+ 
+ ### 4.4 Platform confirmation
+ 
+@@ -106,6 +125,9 @@ silencing it would hide malicious or defective activity.
+ - **RF-08** (Undesired Behavior): If a platform confirmation references a
+   Receipt that is not in the recognizer's Receipt index, the fact MUST be marked
+   invalid.
++- **RF-26** (Undesired Behavior): If the confirming entity's `pkh` equals
++  `partyA` or `partyB` of the referenced Receipt (self-corroboration, SPEC-003
++  RF-10), the recognizer MUST mark the `PLATFORM_CONFIRMATION` invalid.
+ 
+ ### 4.5 Trust
+ 
+@@ -121,7 +143,13 @@ silencing it would hide malicious or defective activity.
+   to retain, and MUST be able to reconstruct after a process restart:
+   1. the live Rating Right outpoints that have not yet been spent as ratings;
+   2. the transaction identifiers of recognized Receipts;
+-  3. the registered identity-vault outpoints, with their collateral.
++  3. the registered identity-vault outpoints, with their collateral;
++  4. the recognized interaction context of each Receipt, when present (RF-23);
++  5. the set of rating references that have already been retracted (RF-27).
++- **RF-27** (Ubiquity): The recognizer MUST retain — and reconstruct after a
++  restart — the set of `RATING_RETRACTION` references so that a repeated
++  retraction of the same rating is deterministic (SPEC-004 RF-07). Each entry
++  MUST remain valid for the rating it points to, regardless of later facts.
+ - **RF-13** (Undesired Behavior): A spent Rating Right MUST be removed from the
+   retained set when its rating is recognized, so that the same spend can never
+   yield two ratings.
+@@ -143,6 +171,9 @@ recognizers MUST reach the same conclusion (`VALID`, `INVALID`, or no fact).
+   invalid.
+ - `IDENTITY_COLLATERAL_TOP_UP` and `IDENTITY_BURNED` depend on a prior vault
+   registration (RF-09, RF-10), so the same restriction applies to vault spends.
++- `RATING_RETRACTION` is validated against the ratings already recognized
++  (RF-25) and against the retracted set (RF-27), so the same restriction applies
++  to retractions.
+ 
+ ## 6. Implementation Notes for CashTokens and CashScript
+ 
+@@ -182,6 +213,11 @@ A Rating Right spent **without** a RepID `OP_RETURN` is **not** recognized as a
+ fact, and the outpoint remains alive in the retained set. The recognizer
+ recognizes complete shapes, not partial spends.
+ 
++The same **complete-shape** rule applies to malformed rating payloads: an
++`OP_RETURN` built with a valid tag but the wrong chunk count or chunk length is
++**not** a fact (SPEC-009 RF-W64/RF-W65), while an out-of-range score **is** a
++fact marked `valid: false` (RF-06).
++
+ Supporting that case would require tracking spends that carry no payload. It is
+ **out of scope** (see §9).
+ 
+@@ -217,6 +253,11 @@ the authority that makes a fact valid.
+       the outpoint registration.
+ - [x] Remaining recognized facts covered: `RECEIPT_GENESIS`, `RATING_ISSUED`,
+       `PLATFORM_CONFIRMATION`, `TRUST_LINK`.
++- [ ] **Lote 2 — not executed:** `RATING_RETRACTION` (RF-25), the Receipt
++      interaction context (RF-23/RF-27), the `REPID_RATING2` `commentHash`
++      (RF-24) and self-corroboration invalidation (RF-26) are NOT yet covered by
++      any executable test. They are specified in this document and scheduled for
++      conformance vectors in task E.
+ - [x] `valid: false` produced for out-of-range scores (RF-06), for confirmations
+       of unknown Receipts (RF-08) and for self-trust (RF-11).
+ - [x] `null` produced for transactions unrelated to RepID (RF-02) and for a

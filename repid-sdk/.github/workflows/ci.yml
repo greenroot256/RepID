@@ -1,0 +1,179 @@
+name: verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: typecheck, drift, tests and package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A strict compile, including the tests. `noUncheckedIndexedAccess` and
+      # `verbatimModuleSyntax` are on precisely so that a loose third-party type
+      # surfaces here instead of becoming a cast in the recognition code.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Verifies the synced protocol copies against the protocol repository.
+      #
+      # The repository is checked out next to this one so the comparison is real.
+      # Without it this step would report SKIPPED, which is why --strict is used:
+      # a job that cannot reach the protocol has not verified anything, and must
+      # not pass by default.
+      #
+      # PROTOCOL_REPOSITORY is the repository *variable* holding the canonical
+      # protocol URL, mapped into the step below. A GitHub Actions variable is
+      # not an environment variable: it is only visible through the `vars`
+      # context, so without the `env:` mapping this step would see an empty
+      # string even when the variable is correctly configured. That failure mode
+      # is indistinguishable from "nobody set it", which is why the error message
+      # names the variable.
+      #
+      # The URL is intentionally not guessed and has no default. A workflow that
+      # fell back to a stale or wrong checkout would report agreement that means
+      # nothing, and drift is the one thing this step exists to detect.
+      - name: Check out the protocol repository
+        env:
+          PROTOCOL_URL: ${{ vars.PROTOCOL_REPOSITORY }}
+          PROTOCOL_TOKEN: ${{ secrets.PROTOCOL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROTOCOL_URL:-}" ]; then
+            echo "::error::repository variable PROTOCOL_REPOSITORY is not set; refusing to skip the drift check"
+            exit 1
+          fi
+          if [ -n "${PROTOCOL_TOKEN:-}" ]; then
+            # A private protocol repository needs credentials. The token travels in
+            # an extra header rather than in the URL so it cannot land in a log
+            # line or in .git/config.
+            auth=$(printf 'x-access-token:%s' "${PROTOCOL_TOKEN}" | base64 -w0)
+            git -c http.extraheader="AUTHORIZATION: basic ${auth}" \
+              clone --depth 1 "${PROTOCOL_URL}" ../repid-protocol
+          else
+            git clone --depth 1 "${PROTOCOL_URL}" ../repid-protocol
+          fi
+          rm -rf ../repid-protocol/.git
+
+      - name: Check drift against the protocol
+        run: npm run check:drift:strict
+        env:
+          REPID_PROTOCOL_REPO: ${{ github.workspace }}/../repid-protocol
+
+      - name: Run the test suite
+        run: npm test
+
+      # Builds, then packs and installs the tarball into a scratch project. This
+      # is the only step that proves the published surface is real: the exports
+      # resolve, the JSON assets shipped in `files` are actually present, and the
+      # compiled JavaScript loads outside the source tree. A green test suite
+      # imports from src/ and would pass happily with a broken `files` list.
+      - name: Build
+        run: npm run build
+
+      - name: Verify the packed tarball
+        run: |
+          set -euo pipefail
+          tarball=$(npm pack --silent)
+          echo "packed ${tarball}"
+
+          # Materialize the listing once instead of piping `tar` into `grep -q`
+          # for every check. `grep -q` stops reading at the first match and
+          # closes the pipe, which sends `tar` a SIGPIPE; under `set -o pipefail`
+          # that turns a successful match into a reported failure. The race is
+          # invisible locally and red in CI, so it is removed rather than tuned.
+          tar -tzf "${tarball}" > tarball.listing
+
+          # SOURCE.json is a build manifest, not a runtime input. It must not
+          # ship: it records provenance for the repository, and a published
+          # package has no business carrying it.
+          if grep -q 'SOURCE.json' tarball.listing; then
+            echo "::error::SOURCE.json must not be published"
+            exit 1
+          fi
+
+          for required in \
+            package/dist/index.js \
+            package/dist/node/index.js \
+            package/dist/index.d.ts \
+            package/dist/protocol/constants.json \
+            package/dist/protocol/schemas/repid-fact.schema.json \
+            package/dist/protocol/protocol-version.json \
+            package/README.md \
+            package/LICENSE
+          do
+            if ! grep -qx "${required}" tarball.listing; then
+              echo "::error::${required} is missing from the tarball"
+              exit 1
+            fi
+          done
+
+          # Import the packed package, not the working tree, so a path that only
+          # resolves locally cannot pass this step.
+          scratch=$(mktemp -d)
+          cd "${scratch}"
+          npm init -y >/dev/null
+          npm install "${OLDPWD}/${tarball}" >/dev/null
+          cat > probe.mjs <<'PROBE'
+          import { indexRawTransaction, createMemoryStore, PROTOCOL_VERSION, PROTOCOL_STATUS, FACT_TYPES, OP_RETURN_TAGS } from '@repid/sdk';
+          import { createJsonFileStore } from '@repid/sdk/node';
+          import constants from '@repid/sdk/protocol/constants.json' with { type: 'json' };
+          import version from '@repid/sdk/protocol/protocol-version.json' with { type: 'json' };
+
+          if (typeof indexRawTransaction !== 'function') throw new Error('core entry point did not load');
+          if (typeof createJsonFileStore !== 'function') throw new Error('node entry point did not load');
+          if (PROTOCOL_STATUS !== 'pre-release') throw new Error('protocol status missing: ' + PROTOCOL_STATUS);
+          if (version.version !== PROTOCOL_VERSION) throw new Error('version export disagrees with the shipped json');
+          if (constants.opReturnTags.RATING.value !== OP_RETURN_TAGS.RATING) throw new Error('tag export disagrees with the shipped json');
+          if (FACT_TYPES.length !== 7) throw new Error('unexpected fact type count: ' + FACT_TYPES.length);
+
+          // The store must work from the packed build, not merely import.
+          const store = createMemoryStore();
+          const outpoint = 'aa'.repeat(32) + ':0';
+          store.trackRatingRight(outpoint, { ownerPkh: 'bb'.repeat(20), ratesPkh: 'cc'.repeat(20) });
+          const found = store.getRatingRight(outpoint);
+          if (!found || found.ownerPkh !== 'bb'.repeat(20)) throw new Error('store did not round-trip');
+          if (found.outpoint !== outpoint) throw new Error('store did not file the record under the key given');
+          store.consumeRatingRight(outpoint);
+          if (store.getRatingRight(outpoint) !== undefined) throw new Error('consumed rating right is still tracked');
+
+          // Undecodable hex must throw rather than be reported as "not a fact".
+          let threw = false;
+          try { indexRawTransaction('00', store); } catch (e) { threw = /decode/i.test(String(e && e.message)); }
+          if (!threw) throw new Error('undecodable hex did not throw a decode error');
+
+          console.log('packed package imports and runs: protocol ' + PROTOCOL_VERSION + ' (' + PROTOCOL_STATUS + ')');
+          PROBE
+          node probe.mjs
+
+      - name: Verify line endings and absence of encoding damage
+        run: |
+          # A U+FFFD in a source file is silent corruption: it renders as a
+          # replacement character and the surrounding text keeps looking almost
+          # right. The synced protocol copies are excluded on purpose: they are
+          # byte-for-byte copies of another repository and are checked by
+          # check:drift instead.
+          if grep -rlP '\x{FFFD}' --include='*.md' --include='*.ts' --include='*.mjs' --include='*.json' \
+               --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=protocol --exclude-dir=fixtures . ; then
+            echo "::error::found U+FFFD (replacement character) in a tracked file"
+            exit 1
+          fi
+          echo "no U+FFFD found"
+          if grep -rlP '\r$' --include='*.md' --include='*.ts' --include='*.mjs' --include='*.json' \
+               --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=protocol --exclude-dir=fixtures . ; then
+            echo "::error::found CRLF line endings; .gitattributes requires LF"
+            exit 1
+          fi
+          echo "line endings are LF"

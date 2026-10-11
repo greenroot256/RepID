@@ -1,0 +1,131 @@
+pragma cashscript ^0.13.0;
+
+// RFC-003 — Interaction Receipt Protocol
+// RFC-004 — RepID Rating Protocol (Rating Rights)
+//
+// ReceiptGenesisValidator is the anti-corruption layer between an
+// app-specific interaction and RepID: it requires the signature of BOTH
+// participants (jointly-signed), requires those participants to be two
+// distinct addresses, and, in a single genesis transaction, mints:
+//
+//   output 0 — Interaction Receipt: immutable NFT, the on-chain fact that
+//              the interaction happened. It is locked to partyA's P2PKH by
+//              convention (its location does not matter: it is never spent
+//              again under covenant logic; it is just an indexable anchor).
+//   output 1 — partyA's Rating Right: immutable NFT locked under the
+//              RatingRightVault covenant instantiated for partyA. Its
+//              commitment stores partyB's pkh: it is "A's right to rate B".
+//   output 2 — partyB's Rating Right: symmetric, locked under the
+//              RatingRightVault instantiated for partyB, with
+//              commitment = partyA's pkh.
+//   output 3 — P2PKH change to partyA (the party funding the genesis
+//              transaction). On a real network (Chipnet) the funding UTXO
+//              has real value; without the change, almost all of it would
+//              be lost to fees. It must be pure cash (no tokens) and go
+//              back to partyA.
+//
+// WHY THE RATING RIGHTS ARE COVENANT-LOCKED
+//
+// They used to be locked to a plain P2PKH, and the header comment claimed
+// that "one rating per participant" was enforced by the native UTXO
+// single-spend rules. That was false. UTXO rules forbid spending one
+// *outpoint* twice; they say nothing about the tokens it carries. A holder
+// could spend the right, put an identical NFT in a new output of the same
+// transaction, and spend that too, repeatedly. Only the indexer's ledger
+// stopped it, and RF-S04 forbids presenting an interpretation-layer rule as
+// a protocol guarantee — yet RF-O12 and RF-S01 claimed it anyway.
+//
+// RatingRightVault (RFC-004) is what makes the claim true: one path, which
+// destroys the NFT, so "at most one rating per holder per receipt" follows
+// from the destruction alone. It also means the right cannot be transferred.
+//
+// HOW THIS CONTRACT REFERENCES THAT COVENANT
+//
+// CashScript 0.13 has no `import`, cannot build a LockingBytecode from raw
+// bytes, and cannot concatenate byte strings, so this contract cannot embed
+// RatingRightVault's bytecode or mention the contract by name. This is the
+// same constraint IdentityVault works under, and it is resolved the same way:
+// by commitment instead of by reference.
+//
+// ratingRightHashA/B are the P2SH32 hashes of RatingRightVault instantiated
+// with partyAPkh/partyBPkh respectively. The deployer computes them from the
+// canonical bytecode, so on its own the hash proves nothing — anyone could
+// commit to an arbitrary script. What makes it meaningful is that the
+// recognizer reconstructs the canonical bytecode and rejects the receipt
+// unless the committed hash matches (SPEC-009 RF-W47/RF-W56). The chain
+// enforces that the two rights are non-recreatable once spent; the indexer
+// establishes that they were the right covenant to begin with.
+//
+// The width is P2SH32 and not P2SH20 because that is what the CashScript
+// compiler emits for a contract address: `new Contract(...)` produces
+// `OP_HASH256 <32> OP_EQUAL`. A bytes20 argument would force P2SH20, a form the
+// compiler never produces, so every deployed right would sit at an address this
+// covenant refuses.
+//
+// DESIGN NOTE (assumed, to be confirmed): this version fixes the number of
+// participants at 2 and therefore the number of outputs at 4, instead of
+// generalizing with a loop over N participants. If the "loop" in previous
+// versions was meant to support N-ary interactions, it can be generalized
+// later with a `do...while` over tx.outputs without changing mint()'s
+// public interface.
+contract ReceiptGenesisValidator(
+    bytes20 partyAPkh,
+    bytes20 partyBPkh,
+    bytes32 ratingRightHashA,
+    bytes32 ratingRightHashB
+) {
+    function mint(pubkey pkA, sig sA, pubkey pkB, sig sB) {
+        // 1) Distinct participants. An interaction with only one party is not an
+        //    interaction between two parties: both Rating Rights would be locked
+        //    to the same covenant, and the Receipt would attest that somebody
+        //    interacted with themselves, which is exactly the claim a reputation
+        //    protocol must never let a wallet make about itself.
+        //
+        //    Checked before the signatures because it is a statement about
+        //    the contract's own arguments rather than about this transaction, and
+        //    because failing it should cost nothing.
+        require(partyAPkh != partyBPkh);
+
+        // 2) Joint signature: both participants must authorize the
+        //    genesis of the interaction receipt.
+        require(hash160(pkA) == partyAPkh);
+        require(checkSig(sA, pkA));
+        require(hash160(pkB) == partyBPkh);
+        require(checkSig(sB, pkB));
+
+        // 3) CashTokens genesis rule: the spent UTXO must come
+        //    from vout 0 of its source transaction.
+        require(tx.inputs[this.activeInputIndex].outpointIndex == 0);
+        bytes32 category = tx.inputs[this.activeInputIndex].outpointTransactionHash;
+
+        // 4) Exactly 4 outputs: Receipt + 2 Rating Rights + change to
+        //    partyA. No additional hidden minting.
+        require(tx.outputs.length == 4);
+
+        // Output 0 — Interaction Receipt (immutable, indexable anchor)
+        require(tx.outputs[0].tokenCategory == category);
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].lockingBytecode == new LockingBytecodeP2PKH(partyAPkh));
+
+        // Output 1 — partyA's Rating Right (right to rate partyB),
+        // locked under the RatingRightVault instantiated for partyA.
+        require(tx.outputs[1].tokenCategory == category);
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].nftCommitment == partyBPkh);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2SH32(ratingRightHashA));
+
+        // Output 2 — partyB's Rating Right (right to rate partyA),
+        // locked under the RatingRightVault instantiated for partyB.
+        require(tx.outputs[2].tokenCategory == category);
+        require(tx.outputs[2].tokenAmount == 0);
+        require(tx.outputs[2].nftCommitment == partyAPkh);
+        require(tx.outputs[2].lockingBytecode == new LockingBytecodeP2SH32(ratingRightHashB));
+
+// Output 3 — P2PKH change to partyA. It must not carry tokens
+        // minted in this transaction (the only possible ones are of the
+        // category just created by the genesis).
+        require(tx.outputs[3].tokenAmount == 0);
+        require(tx.outputs[3].tokenCategory != category);
+        require(tx.outputs[3].lockingBytecode == new LockingBytecodeP2PKH(partyAPkh));
+    }
+}

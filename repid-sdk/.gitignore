@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build output of `npm run build`. It is generated from src/ on every install
+# via prepack, so committing it would only create merge conflicts and stale
+# .d.ts files. Nothing in this repository should ever read dist/ from git.
+dist/
+*.tsbuildinfo
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local experiment scratch. Never commit a raw transaction dump or a key.
+*.log
+scratch/

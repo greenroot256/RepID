@@ -1,0 +1,26 @@
+{
+  "name": "@repid/indexer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RepID indexer: reconstructs structured protocol facts from raw BCH transaction hex (CashTokens-aware). Vendored into the cash-freelancers monorepo; `src/` and `test/` are byte-identical to the reference implementation. Differences from upstream are confined to this file: `@repid/protocol` is resolved through the workspace instead of a registry version.",
+  "type": "module",
+  "main": "src/repid-indexer.mjs",
+  "exports": {
+    ".": "./src/repid-indexer.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "license": "ISC",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bitauth/libauth": "^3.1.0-next.8",
+    "@repid/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "cashscript": "^0.13.3",
+    "vitest": "^4.1.11"
+  }
+}

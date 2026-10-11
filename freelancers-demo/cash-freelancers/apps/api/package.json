@@ -1,0 +1,31 @@
+{
+    "name": "api",
+    "private": true,
+    "version": "0.0.1",
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+        "build": "tsc -p tsconfig.json",
+        "start": "node --env-file-if-exists=../../.env dist/index.js",
+        "typecheck": "tsc --noEmit",
+        "migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
+        "smoke:auth": "tsx --env-file-if-exists=../../.env scripts/smoke-auth-flow.ts",
+        "smoke:authz": "tsx --env-file-if-exists=../../.env scripts/smoke-authz.ts"
+    },
+    "dependencies": {
+        "@bitauth/libauth": "^3.1.0-next.8",
+        "@cash-freelancers/contracts": "workspace:*",
+        "@cash-freelancers/shared": "workspace:*",
+        "@repid/sdk": "file:..\\..\\..\\..\\repid-sdk",
+        "argon2": "^0.45.1",
+        "cashscript": "^0.13.3",
+        "fastify": "^5.1.0",
+        "pg": "^8.13.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.7.0",
+        "@types/pg": "^8.11.0",
+        "tsx": "^4.19.0",
+        "typescript": "^5.6.0"
+    }
+}

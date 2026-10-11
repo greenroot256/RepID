@@ -1,0 +1,64 @@
+pragma cashscript ^0.13.0;
+
+// RFC-004 — RepID Rating Protocol (Rating Right)
+//
+// A Rating Right is "the right to rate the counterparty of one interaction".
+// Before this covenant it was a plain P2PKH NFT, and that was a promise the
+// chain could not keep.
+//
+// UTXO rules forbid spending *one outpoint* twice. They say nothing about the
+// tokens it carries. A P2PKH holder could spend their right and put an
+// identical NFT back in a new output of the same transaction, then spend that
+// one too, and again, for as long as the fees last. Nothing on chain stopped
+// it, because nothing on chain was watching. What actually prevented the
+// second rating was the indexer's ledger: the recognizer only recognizes a
+// rating whose input outpoint it has tracked as a Rating Right, and a
+// recreated output is never registered as one. The guarantee lived in the
+// interpretation layer, which SPEC-008 RF-S04 forbids presenting as a protocol
+// guarantee, while RF-O12 and RF-S01 claimed it for the protocol anyway.
+//
+// This covenant is what makes the claim true. It has exactly one path.
+//
+// It does not need to read the OP_RETURN. The NFT is destroyed whether or not
+// the spending transaction carries a rating, so "at most one rating per holder
+// per receipt" follows from the destruction alone. What the rating said —
+// tag, score, ratee — stays the indexer's business (SPEC-008 RF-O13, RF-O14).
+// The chain guarantees how many times; the indexer reads what was said.
+//
+// One path also means there is no way to hand the right to someone else.
+// Moving it would require preserving the NFT, which is precisely what this
+// covenant refuses. Declining to rate and giving the right away are the same
+// act: burn it. That is a deliberate loss of capability (SPEC-008 RF-O823),
+// not an oversight: a transferable one-use right is not a one-use right.
+//
+// The counterparty is not a constructor argument. It lives in the NFT
+// commitment, which is readable on chain, and the NFT is destroyed here, so
+// there is nothing left to re-verify.
+contract RatingRightVault(bytes20 ownerPkh) {
+    // rate() — the only path. Spends the right and destroys it.
+    function rate(pubkey pk, sig s) {
+        // Authorization: only the holder of the right may use it.
+        require(hash160(pk) == ownerPkh);
+        require(checkSig(s, pk));
+
+        bytes category = tx.inputs[this.activeInputIndex].tokenCategory;
+
+        // The NFT must NOT reappear in any output. This is the whole point of
+        // the covenant: it is what makes the right single-use at the chain
+        // level rather than single-use as far as an indexer is concerned. The
+        // three genesis outputs cannot move it, so there is no "transfer"
+        // path and no way to mint a second right out of the first.
+        //
+        // Two fixed outputs, no loop: this is the same shape IdentityVault.burn
+        // uses. Output 0 is the OP_RETURN carrying the rating (this covenant
+        // does not inspect it) and output 1 is P2PKH change to the owner.
+        require(tx.outputs.length == 2);
+
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].tokenCategory != category);
+
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].tokenCategory != category);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+    }
+}

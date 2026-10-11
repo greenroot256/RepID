@@ -1,0 +1,15 @@
+{
+  "protocol": "repid",
+  "version": "0.5.0",
+  "status": "pre-release",
+  "specification": {
+    "normativeCore": "SPEC-008-repid-protocol.md",
+    "wireFormat": "SPEC-009-repid-wire-format-and-recognition.md",
+    "recognition": "SPEC-005-indexer-protocol.md",
+    "versioning": "SPEC-010-protocol-versioning.md"
+  },
+  "promotionTo1_0_0": [
+    "At least one independent implementation outside this repository has been verified against the recognition rules (SPEC-005) and the wire format (SPEC-009), following the external indexer guide.",
+    "The covenant artifacts in artifacts/ have been executed by the Bitcoin VM on a public test network with every invariant in SPEC-008 section 4 asserted, not merely observed."
+  ]
+}

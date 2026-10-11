@@ -1,0 +1,50 @@
+pragma cashscript ^0.13.0;
+
+// Bilateral escrow (client-freelancer, no arbiter).
+//
+// Has no refund-to-client path on purpose: if there's a genuine dispute,
+// that case is handled by migrating to ArbitratedEscrow (2-of-3, with an
+// arbiter), a separate contract. This one only covers two paths:
+//   1) release  — the client approves and releases the payment
+//   2) reclaim  — past the timeout with no approval, the freelancer
+//                 claims the payment without needing the client's signature
+//
+// clientPkh / freelancerPkh are hash160(pubkey) — not the full pubkeys —
+// so the contract's address stays lighter.
+// timeout is nLockTime: a block height or unix timestamp (decided by
+// whoever instantiates the contract, following Bitcoin's convention).
+contract EscrowBilateral(bytes20 clientPkh, bytes20 freelancerPkh, int timeout) {
+    // Happy path: the client approves and releases the payment to the freelancer.
+    function release(pubkey pk, sig s) {
+        require(hash160(pk) == clientPkh);
+        require(checkSig(s, pk));
+
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 1);
+
+        int minerFee = 1000; // sats — simple fixed fee for the MVP
+        int amount = tx.inputs[this.activeInputIndex].value - minerFee;
+        require(tx.outputs[0].value == amount);
+
+        bytes25 freelancerLock = new LockingBytecodeP2PKH(freelancerPkh);
+        require(tx.outputs[0].lockingBytecode == freelancerLock);
+    }
+
+    // Safety net: if the client never approves or disputes before the
+    // timeout, the freelancer can claim the payment alone.
+    function reclaim(pubkey pk, sig s) {
+        require(hash160(pk) == freelancerPkh);
+        require(checkSig(s, pk));
+        require(tx.time >= timeout);
+
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 1);
+
+        int minerFee = 1000;
+        int amount = tx.inputs[this.activeInputIndex].value - minerFee;
+        require(tx.outputs[0].value == amount);
+
+        bytes25 freelancerLock = new LockingBytecodeP2PKH(freelancerPkh);
+        require(tx.outputs[0].lockingBytecode == freelancerLock);
+    }
+}

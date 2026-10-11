@@ -1,0 +1,108 @@
+pragma cashscript ^0.13.0;
+
+// RFC-001 — Identity Protocol (collateral vault)
+//
+// IdentityVault is the custodian covenant of the RepID Identity: unlike
+// IdentityGenesisValidator (single-use, NFT to P2PKH), here the identity
+// NFT is locked PRECISELY under the bytecode of this very contract (P2SH),
+// so that the BCH collateral accompanying it can never leave the covenant,
+// except by an authorized owner decision.
+//
+// Spend paths (all require the owner's signature — the covenant custodians
+// real funds, unlike the classic genesis covenant):
+//
+//   mint()              — genesis of the NFT. Output 0: identity NFT with
+//                         commitment = ownerPkh (who controls it stays
+//                         readable on-chain: the indexer cannot read the pkh
+//                         from a P2SH) plus the initial collateral (> 0),
+//                         re-locked to the SAME covenant. Output 1: P2PKH
+//                         change to the owner.
+//   increaseCollateral()— the owner adds more sats to the covenant; the
+//                         covenant's new output must have a value >= the
+//                         one the spent input had (the collateral never
+//                         decreases). Output 1: P2PKH change to the owner.
+//   burn()              — burns the NFT (no output carries the category)
+//                         and ALL the balance returns to the owner's P2PKH.
+//                         The identity loses validity; the owner can mint a
+//                         new one (new genesis, new category) if they want.
+//
+// Design note: the covenant does not remember "how much collateral" in a
+// state variable; it infers it from the value (`satoshis`) of the UTXO
+// locking it. In increaseCollateral, `newCollateral = tx.outputs[0].value`
+// and the on-chain invariant is that this value never drops (>= spent
+// input). Also, output[0] always re-locks to itself by comparing against
+// the active input's lockingBytecode (the covenant itself).
+contract IdentityVault(bytes20 ownerPkh) {
+    function mint(pubkey pk, sig s, int collateral) {
+        // Authorization: only the owner triggers the genesis of their identity.
+        require(hash160(pk) == ownerPkh);
+        require(checkSig(s, pk));
+
+        // 1) CashTokens genesis rule: the spent UTXO must come from
+        //    vout 0 of its source transaction.
+        require(tx.inputs[this.activeInputIndex].outpointIndex == 0);
+        bytes32 newCategory = tx.inputs[this.activeInputIndex].outpointTransactionHash;
+
+        // 2) The initial collateral must be strictly positive.
+        require(collateral > 0);
+
+        // 3) Output 0: identity NFT (capability none, no fungibles)
+        //    with commitment = ownerPkh (readable on-chain) and initial
+        //    collateral, locked to the SAME covenant.
+        require(tx.outputs[0].tokenCategory == newCategory);
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].nftCommitment == ownerPkh);
+        require(tx.outputs[0].value == collateral);
+        require(tx.outputs[0].lockingBytecode == tx.inputs[this.activeInputIndex].lockingBytecode);
+
+        // 4) Output 1: P2PKH change to the owner, pure cash.
+        require(tx.outputs.length == 2);
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].tokenCategory != newCategory);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+    }
+
+    function increaseCollateral(pubkey pk, sig s) {
+        // Authorization: only the owner may touch the collateral.
+        require(hash160(pk) == ownerPkh);
+        require(checkSig(s, pk));
+
+        // 1) The input covenant is the very one being spent.
+        //    Its balance is the current collateral.
+        int oldCollateral = tx.inputs[this.activeInputIndex].value;
+
+        // 2) Output 0: the covenant re-locked to itself with the SAME
+        //    NFT (category and commitment intact), and a value that can
+        //    never be less than the previous collateral.
+        require(tx.outputs[0].tokenCategory == tx.inputs[this.activeInputIndex].tokenCategory);
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].nftCommitment == tx.inputs[this.activeInputIndex].nftCommitment);
+        require(tx.outputs[0].value >= oldCollateral);
+        require(tx.outputs[0].lockingBytecode == tx.inputs[this.activeInputIndex].lockingBytecode);
+
+        // 3) Output 1: P2PKH change to the owner, pure cash.
+        require(tx.outputs.length == 2);
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].tokenCategory != tx.inputs[this.activeInputIndex].tokenCategory);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+    }
+
+    function burn(pubkey pk, sig s) {
+        // Authorization: only the owner may burn their identity.
+        require(hash160(pk) == ownerPkh);
+        require(checkSig(s, pk));
+
+        bytes category = tx.inputs[this.activeInputIndex].tokenCategory;
+
+        // 1) The NFT MUST NOT reappear in any output: implicit burn.
+        //    Fixed outputs: output 0 = full refund P2PKH + output 1 =
+        //    P2PKH change (the covenant does not add outputs on its own).
+        require(tx.outputs.length == 2);
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].tokenCategory != category);
+        require(tx.outputs[0].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].tokenCategory != category);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));
+    }
+}

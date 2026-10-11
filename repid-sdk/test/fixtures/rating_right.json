@@ -1,0 +1,42 @@
+{
+  "contractName": "RatingRightVault",
+  "constructorInputs": [
+    { "name": "ownerPkh", "type": "bytes20" }
+  ],
+  "abi": [
+    {
+      "name": "rate",
+      "inputs": [
+        { "name": "pk", "type": "pubkey" },
+        { "name": "s", "type": "sig" }
+      ]
+    }
+  ],
+  "bytecode": "OP_OVER OP_HASH160 OP_OVER OP_EQUALVERIFY OP_ROT OP_ROT OP_CHECKSIGVERIFY OP_INPUTINDEX OP_UTXOTOKENCATEGORY OP_TXOUTPUTCOUNT OP_2 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTTOKENCATEGORY OP_OVER OP_EQUAL OP_NOT OP_VERIFY OP_1 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_1 OP_OUTPUTTOKENCATEGORY OP_EQUAL OP_NOT OP_VERIFY OP_1 OP_OUTPUTBYTECODE 76a914 OP_ROT OP_CAT 88ac OP_CAT OP_EQUAL",
+  "source": "pragma cashscript ^0.13.0;\n\n// RFC-004 — RepID Rating Protocol (Rating Right)\n//\n// A Rating Right is \"the right to rate the counterparty of one interaction\".\n// Before this covenant it was a plain P2PKH NFT, and that was a promise the\n// chain could not keep.\n//\n// UTXO rules forbid spending *one outpoint* twice. They say nothing about the\n// tokens it carries. A P2PKH holder could spend their right and put an\n// identical NFT back in a new output of the same transaction, then spend that\n// one too, and again, for as long as the fees last. Nothing on chain stopped\n// it, because nothing on chain was watching. What actually prevented the\n// second rating was the indexer's ledger: the recognizer only recognizes a\n// rating whose input outpoint it has tracked as a Rating Right, and a\n// recreated output is never registered as one. The guarantee lived in the\n// interpretation layer, which SPEC-008 RF-S04 forbids presenting as a protocol\n// guarantee, while RF-O12 and RF-S01 claimed it for the protocol anyway.\n//\n// This covenant is what makes the claim true. It has exactly one path.\n//\n// It does not need to read the OP_RETURN. The NFT is destroyed whether or not\n// the spending transaction carries a rating, so \"at most one rating per holder\n// per receipt\" follows from the destruction alone. What the rating said —\n// tag, score, ratee — stays the indexer's business (SPEC-008 RF-O13, RF-O14).\n// The chain guarantees how many times; the indexer reads what was said.\n//\n// One path also means there is no way to hand the right to someone else.\n// Moving it would require preserving the NFT, which is precisely what this\n// covenant refuses. Declining to rate and giving the right away are the same\n// act: burn it. That is a deliberate loss of capability (SPEC-008 RF-O823),\n// not an oversight: a transferable one-use right is not a one-use right.\n//\n// The counterparty is not a constructor argument. It lives in the NFT\n// commitment, which is readable on chain, and the NFT is destroyed here, so\n// there is nothing left to re-verify.\ncontract RatingRightVault(bytes20 ownerPkh) {\n    // rate() — the only path. Spends the right and destroys it.\n    function rate(pubkey pk, sig s) {\n        // Authorization: only the holder of the right may use it.\n        require(hash160(pk) == ownerPkh);\n        require(checkSig(s, pk));\n\n        bytes category = tx.inputs[this.activeInputIndex].tokenCategory;\n\n        // The NFT must NOT reappear in any output. This is the whole point of\n        // the covenant: it is what makes the right single-use at the chain\n        // level rather than single-use as far as an indexer is concerned. The\n        // three genesis outputs cannot move it, so there is no \"transfer\"\n        // path and no way to mint a second right out of the first.\n        //\n        // Two fixed outputs, no loop: this is the same shape IdentityVault.burn\n        // uses. Output 0 is the OP_RETURN carrying the rating (this covenant\n        // does not inspect it) and output 1 is P2PKH change to the owner.\n        require(tx.outputs.length == 2);\n\n        require(tx.outputs[0].tokenAmount == 0);\n        require(tx.outputs[0].tokenCategory != category);\n\n        require(tx.outputs[1].tokenAmount == 0);\n        require(tx.outputs[1].tokenCategory != category);\n        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));\n    }\n}",
+  "fingerprint": "570f8e7f2466ae78edc1be357e5627a5aad6a61e41d99dbdb880fb77af175080",
+  "debug": {
+    "bytecode": "78a978887b7badc0cec4529d00d3009d00d17887916951d3009d51d187916951cd0376a9147b7e0288ac7e87",
+    "sourceMap": "41:24:41:26;:16::27:1;:31::39:0;:8::41:1;42:25:42:26:0;:28::30;:8::33:1;44:35:44:56:0;:25::71:1;55:16:55:33:0;:37::38;:8::40:1;57:27:57:28:0;:16::41:1;:45::46:0;:8::48:1;58:27:58:28:0;:16::43:1;:47::55:0;:16:::1;;:8::57;60:27:60:28:0;:16::41:1;:45::46:0;:8::48:1;61:27:61:28:0;:16::43:1;:::55;;:8::57;62:27:62:28:0;:16::45:1;:49::83:0;:74::82;:49::83:1;;;:8::85",
+    "logs": [],
+    "requires": [
+      { "ip": 4, "line": 41 },
+      { "ip": 7, "line": 42 },
+      { "ip": 12, "line": 55 },
+      { "ip": 16, "line": 57 },
+      { "ip": 22, "line": 58 },
+      { "ip": 26, "line": 60 },
+      { "ip": 31, "line": 61 },
+      { "ip": 40, "line": 62 }
+    ]
+  },
+  "compiler": {
+    "name": "cashc",
+    "version": "0.13.2",
+    "options": {
+      "enforceFunctionParameterTypes": true,
+      "enforceLocktimeGuard": true
+    }
+  },
+  "updatedAt": "2026-10-05T01:54:21.581Z"
+}

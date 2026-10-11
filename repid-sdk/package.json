@@ -1,0 +1,73 @@
+{
+  "name": "@repid/sdk",
+  "version": "0.1.0",
+  "description": "RepID SDK: recognize RepID protocol facts from raw BCH transaction hex and retain the state the specification requires.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/greenroot256/repid-sdk.git"
+  },
+  "homepage": "https://github.com/greenroot256/repid-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/greenroot256/repid-sdk/issues"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    },
+    "./protocol/constants.json": "./dist/protocol/constants.json",
+    "./protocol/schemas/repid-fact.schema.json": "./dist/protocol/schemas/repid-fact.schema.json",
+    "./protocol/protocol-version.json": "./dist/protocol/protocol-version.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync:protocol": "node scripts/sync-protocol.mjs",
+    "check:drift": "node scripts/check-drift.mjs",
+    "check:drift:strict": "node scripts/check-drift.mjs --strict",
+    "check:all": "npm run typecheck && npm run check:drift && npm test",
+    "prepare": "npm run build",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "bitcoin-cash",
+    "cashtokens",
+    "reputation",
+    "repid",
+    "indexer",
+    "protocol"
+  ],
+  "dependencies": {
+    "@bitauth/libauth": "3.1.0-next.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "ajv": "^8.17.1",
+    "cashscript": "^0.13.3",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  },
+  "license": "MIT"
+}

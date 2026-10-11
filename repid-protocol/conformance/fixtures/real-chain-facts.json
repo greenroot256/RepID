@@ -1,0 +1,70 @@
+{
+  "$comment": "Facts reconstructed by the reference implementation from a real Chipnet run, captured here as conformance vectors. The txids are real and were confirmed on chain. Application annotations (at, roles) are retained verbatim so the suite can prove they are separable from the protocol fact; see SPEC-008 section 3 for the normative field set.",
+
+  "provenance": {
+    "network": "chipnet",
+    "source": "reference implementation, data/repid-state.json",
+    "flow": "two identities minted, one Receipt with two Rating Rights, both parties rated"
+  },
+
+  "facts": [
+    {
+      "type": "IDENTITY_GENESIS",
+      "txid": "a3887c5ea75e3a20f4487aeffd0c60d102552368a9afc3800ebf118a1b33191e",
+      "identityCategory": "012cd29c363f2058d60a00f94ba6a0df51fda0c5f6a78b32c3cf87dcee64b07c",
+      "ownerPkh": "6234d40262ddb07271d34f99ad025c18c56b9238",
+      "collateral": "1000",
+      "identityOutpoint": "a3887c5ea75e3a20f4487aeffd0c60d102552368a9afc3800ebf118a1b33191e:0",
+      "at": "2026-09-27T15:57:20.736Z"
+    },
+    {
+      "type": "IDENTITY_GENESIS",
+      "txid": "f07232cd4f23c72750475d598771254957354af9c522d358e64ce464903337f0",
+      "identityCategory": "c339f7fedcd266df0f0094f6b3aeedd545e8f60dae58969be1816182883de854",
+      "ownerPkh": "18fc5969f82f2429a5366656215de1aa7538af15",
+      "collateral": "900",
+      "identityOutpoint": "f07232cd4f23c72750475d598771254957354af9c522d358e64ce464903337f0:0",
+      "at": "2026-09-27T15:58:58.582Z"
+    },
+    {
+      "type": "RECEIPT_GENESIS",
+      "txid": "6bb06faf9f9588913512c30c21efdcf3569e17519630b4d823890f93bb61b11c",
+      "receiptCategory": "5f4c7226b4aa9d9e9dcbf9518e9bbed00e4e44306c2052ce2bd7fa25560b36b0",
+      "receiptOwnerPkh": "6234d40262ddb07271d34f99ad025c18c56b9238",
+      "ratingRights": [
+        {
+          "outpoint": "6bb06faf9f9588913512c30c21efdcf3569e17519630b4d823890f93bb61b11c:1",
+          "ownerPkh": "6234d40262ddb07271d34f99ad025c18c56b9238",
+          "ratesPkh": "18fc5969f82f2429a5366656215de1aa7538af15"
+        },
+        {
+          "outpoint": "6bb06faf9f9588913512c30c21efdcf3569e17519630b4d823890f93bb61b11c:2",
+          "ownerPkh": "18fc5969f82f2429a5366656215de1aa7538af15",
+          "ratesPkh": "6234d40262ddb07271d34f99ad025c18c56b9238"
+        }
+      ],
+      "roles": ["client", "rider"],
+      "at": "2026-09-27T16:00:27.566Z"
+    },
+    {
+      "type": "RATING_ISSUED",
+      "txid": "ef58b17b77ebbe783654d9293cadee65753603fe6685e67dd3fb06db0a63eabb",
+      "spentOutpoint": "6bb06faf9f9588913512c30c21efdcf3569e17519630b4d823890f93bb61b11c:2",
+      "raterPkh": "18fc5969f82f2429a5366656215de1aa7538af15",
+      "rateePkh": "6234d40262ddb07271d34f99ad025c18c56b9238",
+      "score": 2,
+      "valid": true,
+      "at": "2026-09-27T16:00:37.012Z"
+    },
+    {
+      "type": "RATING_ISSUED",
+      "txid": "404533cc01ffa2394d0317c1fabf1726f2e0831d1e17c61456f17f36cade014c",
+      "spentOutpoint": "6bb06faf9f9588913512c30c21efdcf3569e17519630b4d823890f93bb61b11c:1",
+      "raterPkh": "6234d40262ddb07271d34f99ad025c18c56b9238",
+      "rateePkh": "18fc5969f82f2429a5366656215de1aa7538af15",
+      "score": 3,
+      "valid": true,
+      "at": "2026-09-27T16:00:39.258Z"
+    }
+  ]
+}

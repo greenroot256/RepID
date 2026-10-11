@@ -1,0 +1,84 @@
+{
+  "contractName": "IdentityVault",
+  "constructorInputs": [
+    { "name": "ownerPkh", "type": "bytes20" }
+  ],
+  "abi": [
+    {
+      "name": "mint",
+      "inputs": [
+        { "name": "pk", "type": "pubkey" },
+        { "name": "s", "type": "sig" },
+        { "name": "collateral", "type": "int" }
+      ]
+    },
+    {
+      "name": "increaseCollateral",
+      "inputs": [
+        { "name": "pk", "type": "pubkey" },
+        { "name": "s", "type": "sig" }
+      ]
+    },
+    {
+      "name": "burn",
+      "inputs": [
+        { "name": "pk", "type": "pubkey" },
+        { "name": "s", "type": "sig" }
+      ]
+    }
+  ],
+  "bytecode": "OP_OVER OP_0 OP_NUMEQUAL OP_IF OP_2 OP_PICK OP_HASH160 OP_OVER OP_EQUALVERIFY OP_2SWAP OP_CHECKSIGVERIFY OP_INPUTINDEX OP_OUTPOINTINDEX OP_0 OP_NUMEQUALVERIFY OP_INPUTINDEX OP_OUTPOINTTXHASH OP_3 OP_PICK OP_0 OP_GREATERTHAN OP_VERIFY OP_0 OP_OUTPUTTOKENCATEGORY OP_OVER OP_EQUALVERIFY OP_0 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTTOKENCOMMITMENT OP_2 OP_PICK OP_EQUALVERIFY OP_0 OP_OUTPUTVALUE OP_4 OP_ROLL OP_NUMEQUALVERIFY OP_0 OP_OUTPUTBYTECODE OP_INPUTINDEX OP_UTXOBYTECODE OP_EQUALVERIFY OP_TXOUTPUTCOUNT OP_2 OP_NUMEQUALVERIFY OP_1 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_1 OP_OUTPUTTOKENCATEGORY OP_EQUAL OP_NOT OP_VERIFY OP_1 OP_OUTPUTBYTECODE 76a914 OP_ROT OP_CAT 88ac OP_CAT OP_EQUAL OP_NIP OP_ELSE OP_OVER OP_1 OP_NUMEQUAL OP_IF OP_2 OP_PICK OP_HASH160 OP_OVER OP_EQUALVERIFY OP_2SWAP OP_CHECKSIGVERIFY OP_INPUTINDEX OP_UTXOVALUE OP_0 OP_OUTPUTTOKENCATEGORY OP_INPUTINDEX OP_UTXOTOKENCATEGORY OP_EQUALVERIFY OP_0 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTTOKENCOMMITMENT OP_INPUTINDEX OP_UTXOTOKENCOMMITMENT OP_EQUALVERIFY OP_0 OP_OUTPUTVALUE OP_LESSTHANOREQUAL OP_VERIFY OP_0 OP_OUTPUTBYTECODE OP_INPUTINDEX OP_UTXOBYTECODE OP_EQUALVERIFY OP_TXOUTPUTCOUNT OP_2 OP_NUMEQUALVERIFY OP_1 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_1 OP_OUTPUTTOKENCATEGORY OP_INPUTINDEX OP_UTXOTOKENCATEGORY OP_EQUAL OP_NOT OP_VERIFY OP_1 OP_OUTPUTBYTECODE 76a914 OP_ROT OP_CAT 88ac OP_CAT OP_EQUAL OP_NIP OP_ELSE OP_SWAP OP_2 OP_NUMEQUALVERIFY OP_OVER OP_HASH160 OP_OVER OP_EQUALVERIFY OP_ROT OP_ROT OP_CHECKSIGVERIFY 9000 OP_CHECKSEQUENCEVERIFY OP_DROP OP_INPUTINDEX OP_UTXOTOKENCATEGORY OP_TXOUTPUTCOUNT OP_2 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTTOKENCATEGORY OP_OVER OP_EQUAL OP_NOT OP_VERIFY OP_0 OP_OUTPUTBYTECODE 76a914 OP_3 OP_PICK OP_CAT 88ac OP_CAT OP_EQUALVERIFY OP_1 OP_OUTPUTTOKENAMOUNT OP_0 OP_NUMEQUALVERIFY OP_1 OP_OUTPUTTOKENCATEGORY OP_EQUAL OP_NOT OP_VERIFY OP_1 OP_OUTPUTBYTECODE 76a914 OP_ROT OP_CAT 88ac OP_CAT OP_EQUAL OP_ENDIF OP_ENDIF",
+  "source": "pragma cashscript ^0.13.0;\n\n// RFC-001 — Identity Protocol (collateral vault)\n//\n// IdentityVault is the custodian covenant of the RepID Identity: unlike\n// IdentityGenesisValidator (single-use, NFT to P2PKH), here the identity\n// NFT is locked PRECISELY under the bytecode of this very contract (P2SH),\n// so that the BCH collateral accompanying it can never leave the covenant,\n// except by an authorized owner decision.\n//\n// Spend paths (all require the owner's signature — the covenant custodians\n// real funds, unlike the classic genesis covenant):\n//\n//   mint()              — genesis of the NFT. Output 0: identity NFT with\n//                         commitment = ownerPkh (who controls it stays\n//                         readable on-chain: the indexer cannot read the pkh\n//                         from a P2SH) plus the initial collateral (> 0),\n//                         re-locked to the SAME covenant. Output 1: P2PKH\n//                         change to the owner.\n//   increaseCollateral()— the owner adds more sats to the covenant; the\n//                         covenant's new output must have a value >= the\n//                         one the spent input had (the collateral never\n//                         decreases). Output 1: P2PKH change to the owner.\n//   burn()              — burns the NFT (no output carries the category)\n//                         and ALL the balance returns to the owner's P2PKH.\n//                         The identity loses validity; the owner can mint a\n//                         new one (new genesis, new category) if they want.\n//                         0.4.0: requires the vault to have existed for at\n//                         least `identityVault.minBurnDelayBlocks` (144)\n//                         blocks before it can be destroyed (RF-O831).\n//\n// Design note: the covenant does not remember \"how much collateral\" in a\n// state variable; it infers it from the value (`satoshis`) of the UTXO\n// locking it. In increaseCollateral, `newCollateral = tx.outputs[0].value`\n// and the on-chain invariant is that this value never drops (>= spent\n// input). Also, output[0] always re-locks to itself by comparing against\n// the active input's lockingBytecode (the covenant itself).\ncontract IdentityVault(bytes20 ownerPkh) {\n    function mint(pubkey pk, sig s, int collateral) {\n        // Authorization: only the owner triggers the genesis of their identity.\n        require(hash160(pk) == ownerPkh);\n        require(checkSig(s, pk));\n\n        // 1) CashTokens genesis rule: the spent UTXO must come from\n        //    vout 0 of its source transaction.\n        require(tx.inputs[this.activeInputIndex].outpointIndex == 0);\n        bytes32 newCategory = tx.inputs[this.activeInputIndex].outpointTransactionHash;\n\n        // 2) The initial collateral must be strictly positive.\n        require(collateral > 0);\n\n        // 3) Output 0: identity NFT (capability none, no fungibles)\n        //    with commitment = ownerPkh (readable on-chain) and initial\n        //    collateral, locked to the SAME covenant.\n        require(tx.outputs[0].tokenCategory == newCategory);\n        require(tx.outputs[0].tokenAmount == 0);\n        require(tx.outputs[0].nftCommitment == ownerPkh);\n        require(tx.outputs[0].value == collateral);\n        require(tx.outputs[0].lockingBytecode == tx.inputs[this.activeInputIndex].lockingBytecode);\n\n        // 4) Output 1: P2PKH change to the owner, pure cash.\n        require(tx.outputs.length == 2);\n        require(tx.outputs[1].tokenAmount == 0);\n        require(tx.outputs[1].tokenCategory != newCategory);\n        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));\n    }\n\n    function increaseCollateral(pubkey pk, sig s) {\n        // Authorization: only the owner may touch the collateral.\n        require(hash160(pk) == ownerPkh);\n        require(checkSig(s, pk));\n\n        // 1) The input covenant is the very one being spent.\n        //    Its balance is the current collateral.\n        int oldCollateral = tx.inputs[this.activeInputIndex].value;\n\n        // 2) Output 0: the covenant re-locked to itself with the SAME\n        //    NFT (category and commitment intact), and a value that can\n        //    never be less than the previous collateral.\n        require(tx.outputs[0].tokenCategory == tx.inputs[this.activeInputIndex].tokenCategory);\n        require(tx.outputs[0].tokenAmount == 0);\n        require(tx.outputs[0].nftCommitment == tx.inputs[this.activeInputIndex].nftCommitment);\n        require(tx.outputs[0].value >= oldCollateral);\n        require(tx.outputs[0].lockingBytecode == tx.inputs[this.activeInputIndex].lockingBytecode);\n\n        // 3) Output 1: P2PKH change to the owner, pure cash.\n        require(tx.outputs.length == 2);\n        require(tx.outputs[1].tokenAmount == 0);\n        require(tx.outputs[1].tokenCategory != tx.inputs[this.activeInputIndex].tokenCategory);\n        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));\n    }\n\n    function burn(pubkey pk, sig s) {\n        // Authorization: only the owner may burn their identity.\n        require(hash160(pk) == ownerPkh);\n        require(checkSig(s, pk));\n\n        // 0.4.0 (RF-O831): minimum lifetime before the collateral can walk\n        // away — counterparties get a window to read the identity first. The\n        // delay binds by covenant, not by indexer: burn is impossible below\n        // this age, whatever an indexer claims. Compiled and VM-verified in\n        // task E: see conformance/identity-vault-burn-delay.test.mjs. The VM\n        // rejects sequences below 144, sequences with the CSV disable flag\n        // set and seconds-unit sequences; cashscript's default disabled\n        // sequence (0xfffffffe) is NOT spendable here, the burn must declare\n        // a relative-lock sequence in block units (bit 31 clear). Value read\n        // from protocol/constants.json `identityVault.minBurnDelayBlocks`\n        // (144).\n        require(this.age >= 144);\n\n        bytes category = tx.inputs[this.activeInputIndex].tokenCategory;\n\n        // 1) The NFT MUST NOT reappear in any output: implicit burn.\n        //    Fixed outputs: output 0 = full refund P2PKH + output 1 =\n        //    P2PKH change (the covenant does not add outputs on its own).\n        require(tx.outputs.length == 2);\n        require(tx.outputs[0].tokenAmount == 0);\n        require(tx.outputs[0].tokenCategory != category);\n        require(tx.outputs[0].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));\n        require(tx.outputs[1].tokenAmount == 0);\n        require(tx.outputs[1].tokenCategory != category);\n        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(ownerPkh));\n    }\n}",
+  "fingerprint": "054e4c9df4556de3f984f2385e4bd26ece91f5bb6ff4f927a7c02ae51df9aa65",
+  "debug": {
+    "bytecode": "78009c635279a9788872adc0c9009dc0c8537900a06900d1788800d3009d00d252798800cc547a9d00cdc0c788c4529d51d3009d51d187916951cd0376a9147b7e0288ac7e87776778519c635279a9788872adc0c600d1c0ce8800d3009d00d2c0cf8800cca16900cdc0c788c4529d51d3009d51d1c0ce87916951cd0376a9147b7e0288ac7e8777677c529d78a978887b7bad029000b275c0cec4529d00d3009d00d17887916900cd0376a91453797e0288ac7e8851d3009d51d187916951cd0376a9147b7e0288ac7e876868",
+    "sourceMap": "39:4:66:5;;;;41:24:41:26;;:16::27:1;:31::39:0;:8::41:1;42:25:42:30:0;:8::33:1;46:26:46:47:0;:16::62:1;:66::67:0;:8::69:1;47:40:47:61:0;:30::86:1;50:16:50:26:0;;:29::30;:16:::1;:8::32;55:27:55:28:0;:16::43:1;:47::58:0;:8::60:1;56:27:56:28:0;:16::41:1;:45::46:0;:8::48:1;57:27:57:28:0;:16::43:1;:47::55:0;;:8::57:1;58:27:58:28:0;:16::35:1;:39::49:0;;:8::51:1;59:27:59:28:0;:16::45:1;:59::80:0;:49::97:1;:8::99;62:16:62:33:0;:37::38;:8::40:1;63:27:63:28:0;:16::41:1;:45::46:0;:8::48:1;64:27:64:28:0;:16::43:1;:::58;;:8::60;65:27:65:28:0;:16::45:1;:49::83:0;:74::82;:49::83:1;;;:8::85;39:52:66:5;:4;68::91::0;;;;70:24:70:26;;:16::27:1;:31::39:0;:8::41:1;71:25:71:30:0;:8::33:1;75:38:75:59:0;:28::66:1;80:27:80:28:0;:16::43:1;:57::78:0;:47::93:1;:8::95;81:27:81:28:0;:16::41:1;:45::46:0;:8::48:1;82:27:82:28:0;:16::43:1;:57::78:0;:47::93:1;:8::95;83:27:83:28:0;:16::35:1;:::52;:8::54;84:27:84:28:0;:16::45:1;:59::80:0;:49::97:1;:8::99;87:16:87:33:0;:37::38;:8::40:1;88:27:88:28:0;:16::41:1;:45::46:0;:8::48:1;89:27:89:28:0;:16::43:1;:57::78:0;:47::93:1;:16;;:8::95;90:27:90:28:0;:16::45:1;:49::83:0;:74::82;:49::83:1;;;:8::85;68:50:91:5;:4;93::123::0;;;95:24:95:26;:16::27:1;:31::39:0;:8::41:1;96:25:96:26:0;:28::30;:8::33:1;109:28:109:31:0;:8::33:1;;111:35:111:56:0;:25::71:1;116:16:116:33:0;:37::38;:8::40:1;117:27:117:28:0;:16::41:1;:45::46:0;:8::48:1;118:27:118:28:0;:16::43:1;:47::55:0;:16:::1;;:8::57;119:27:119:28:0;:16::45:1;:49::83:0;:74::82;;:49::83:1;;;:8::85;120:27:120:28:0;:16::41:1;:45::46:0;:8::48:1;121:27:121:28:0;:16::43:1;:::55;;:8::57;122:27:122:28:0;:16::45:1;:49::83:0;:74::82;:49::83:1;;;:8::85;38:0:124:1;",
+    "logs": [],
+    "requires": [
+      { "ip": 9, "line": 41 },
+      { "ip": 11, "line": 42 },
+      { "ip": 15, "line": 46 },
+      { "ip": 22, "line": 50 },
+      { "ip": 26, "line": 55 },
+      { "ip": 30, "line": 56 },
+      { "ip": 35, "line": 57 },
+      { "ip": 40, "line": 58 },
+      { "ip": 45, "line": 59 },
+      { "ip": 48, "line": 62 },
+      { "ip": 52, "line": 63 },
+      { "ip": 57, "line": 64 },
+      { "ip": 66, "line": 65 },
+      { "ip": 76, "line": 70 },
+      { "ip": 78, "line": 71 },
+      { "ip": 85, "line": 80 },
+      { "ip": 89, "line": 81 },
+      { "ip": 94, "line": 82 },
+      { "ip": 98, "line": 83 },
+      { "ip": 103, "line": 84 },
+      { "ip": 106, "line": 87 },
+      { "ip": 110, "line": 88 },
+      { "ip": 117, "line": 89 },
+      { "ip": 126, "line": 90 },
+      { "ip": 134, "line": 95 },
+      { "ip": 137, "line": 96 },
+      { "ip": 139, "line": 109 },
+      { "ip": 145, "line": 116 },
+      { "ip": 149, "line": 117 },
+      { "ip": 155, "line": 118 },
+      { "ip": 164, "line": 119 },
+      { "ip": 168, "line": 120 },
+      { "ip": 173, "line": 121 },
+      { "ip": 182, "line": 122 }
+    ],
+    "sourceTags": "65:65:sc;125:125:sc"
+  },
+  "compiler": {
+    "name": "cashc",
+    "version": "0.13.2",
+    "options": {
+      "enforceFunctionParameterTypes": true,
+      "enforceLocktimeGuard": true
+    }
+  },
+  "updatedAt": "2026-10-07T02:06:09.952Z"
+}

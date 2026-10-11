@@ -1,0 +1,79 @@
+pragma cashscript ^0.13.0;
+
+// RFC-003 — Interaction Receipt Protocol
+// RFC-004 — RepID Rating Protocol (Rating Rights)
+//
+// ReceiptGenesisValidator is the anti-corruption layer between an
+// app-specific interaction and RepID: it requires the signature of BOTH
+// participants (jointly-signed) and, in a single genesis transaction, mints:
+//
+//   output 0 — Interaction Receipt: immutable NFT, the on-chain fact that
+//              the interaction happened. It is locked to partyA's P2PKH by
+//              convention (its location does not matter: it is never spent
+//              again under covenant logic; it is just an indexable anchor).
+//   output 1 — partyA's Rating Right: immutable NFT locked to partyA's
+//              P2PKH. Its commitment stores partyB's pkh: it is "A's
+//              right to rate B".
+//   output 2 — partyB's Rating Right: symmetric, locked to partyB with
+//              commitment = partyA's pkh.
+//   output 3 — P2PKH change to partyA (the party funding the genesis
+//              transaction). On a real network (Chipnet) the funding UTXO
+//              has real value; without the change, almost all of it would
+//              be lost to fees. It must be pure cash (no tokens) and go
+//              back to partyA.
+//
+// The Rating Rights do not need "mutable"/"minting" capability nor
+// additional covenant logic: being single-output NFTs, the very
+// consumption of the UTXO (ISSUED_RATING, a simple P2PKH spend) enforces
+// "one rating per participant" via the native UTXO single-spend rules —
+// without needing state in the contract.
+//
+// DESIGN NOTE (assumed, to be confirmed): this version fixes the number of
+// participants at 2 and therefore the number of outputs at 4, instead of
+// generalizing with a loop over N participants. If the "loop" in previous
+// versions was meant to support N-ary interactions, it can be generalized
+// later with a `do...while` over tx.outputs without changing mint()'s
+// public interface.
+contract ReceiptGenesisValidator(bytes20 partyAPkh, bytes20 partyBPkh) {
+    function mint(pubkey pkA, sig sA, pubkey pkB, sig sB) {
+        // 1) Joint signature: both participants must authorize the
+        //    genesis of the interaction receipt.
+        require(hash160(pkA) == partyAPkh);
+        require(checkSig(sA, pkA));
+        require(hash160(pkB) == partyBPkh);
+        require(checkSig(sB, pkB));
+
+        // 2) CashTokens genesis rule: the spent UTXO must come
+        //    from vout 0 of its source transaction.
+        require(tx.inputs[this.activeInputIndex].outpointIndex == 0);
+        bytes32 category = tx.inputs[this.activeInputIndex].outpointTransactionHash;
+
+        // 3) Exactly 4 outputs: Receipt + 2 Rating Rights + change to
+        //    partyA. No additional hidden minting.
+        require(tx.outputs.length == 4);
+
+        // Output 0 — Interaction Receipt (immutable, indexable anchor)
+        require(tx.outputs[0].tokenCategory == category);
+        require(tx.outputs[0].tokenAmount == 0);
+        require(tx.outputs[0].lockingBytecode == new LockingBytecodeP2PKH(partyAPkh));
+
+        // Output 1 — partyA's Rating Right (right to rate partyB)
+        require(tx.outputs[1].tokenCategory == category);
+        require(tx.outputs[1].tokenAmount == 0);
+        require(tx.outputs[1].nftCommitment == partyBPkh);
+        require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2PKH(partyAPkh));
+
+        // Output 2 — partyB's Rating Right (right to rate partyA)
+        require(tx.outputs[2].tokenCategory == category);
+        require(tx.outputs[2].tokenAmount == 0);
+        require(tx.outputs[2].nftCommitment == partyAPkh);
+        require(tx.outputs[2].lockingBytecode == new LockingBytecodeP2PKH(partyBPkh));
+
+// Output 3 — P2PKH change to partyA. It must not carry tokens
+        // minted in this transaction (the only possible ones are of the
+        // category just created by the genesis).
+        require(tx.outputs[3].tokenAmount == 0);
+        require(tx.outputs[3].tokenCategory != category);
+        require(tx.outputs[3].lockingBytecode == new LockingBytecodeP2PKH(partyAPkh));
+    }
+}

@@ -1,0 +1,147 @@
+{
+  "$comment": "Machine-readable protocol constants. This file is the single source of truth for tag values, score bounds and byte lengths. Specifications state the rules; this file states the values. A change here is a protocol version change per SPEC-010.",
+
+  "protocolName": "repid",
+
+  "opReturnTagsComment": "Push-only ASCII tags. lengthBytes is the byte length of the tag itself, which determines the direct-push opcode it is encoded with.",
+  "opReturnTags": {
+    "RATING": {
+      "value": "REPID_RATING1",
+      "lengthBytes": 13
+    },
+    "RATING2": {
+      "$comment": "SPEC-004 RF-08. Same single-use Rating Right spend, adds a 32-byte commentHash (see commentHash below).",
+      "value": "REPID_RATING2",
+      "lengthBytes": 13
+    },
+    "RETRACT": {
+      "$comment": "SPEC-004 RF-06/RF-07. Unilateral rating retraction; payload is the referenced Receipt txid (32 bytes, display order).",
+      "value": "REPID_RETRACT1",
+      "lengthBytes": 14
+    },
+    "PLATFORM": {
+      "value": "REPID_PLATFORM1",
+      "lengthBytes": 15
+    },
+    "TRUST": {
+      "value": "REPID_TRUST1",
+      "lengthBytes": 12
+    }
+  },
+
+  "scoreRange": {
+    "$comment": "SPEC-004 RF-04. Values outside this range are NOT dropped: the fact is emitted with valid=false. See SPEC-009 RF-W08.",
+    "MIN_SCORE": 1,
+    "MAX_SCORE": 5,
+    "encodedRange": {
+      "$comment": "The encoded form is a single unsigned byte, so a malformed or out-of-range value can still be 0-255.",
+      "MIN": 0,
+      "MAX": 255,
+      "lengthBytes": 1
+    }
+  },
+
+  "fieldLengths": {
+    "$comment": "Byte lengths of the fixed-width protocol fields. All are rendered as lowercase hex in facts.",
+    "PKH": 20,
+    "TXID": 32,
+    "CATEGORY": 32,
+    "SCORE": 1,
+    "COMMENT_HASH": 32
+  },
+
+  "receiptCommitment": {
+    "$comment": "SPEC-003 RF-08 / SPEC-009 §9.2. Optional interaction context in the Receipt's NFT commitment. 4-byte form: 0x10 · category · roleA · roleB. 36-byte form: 0x11 · category · roleA · roleB · contextHash (32 bytes). The empty commitment is the legacy form. Any other length is not a fact (SPEC-009 RF-W73).",
+    "LEGACY_LENGTH": 0,
+    "CONTEXT_LENGTH": 4,
+    "CONTEXT_WITH_HASH_LENGTH": 36,
+    "CONTEXT_HASH_LENGTH": 32,
+    "FORMAT_BYTE_CONTEXT": "0x10",
+    "FORMAT_BYTE_CONTEXT_WITH_HASH": "0x11",
+    "preimage": {
+      "$comment": "The interaction contextHash has NO published preimage (SPEC-003 RF-08; decision P6 in audit/lote2/A-DECISIONES.md). This entry records only the byte-length fact of the prefix so a producer does not truncate it: 'REPID-RCTX-V1' is 13 ASCII bytes (0x52455049442d524354582d5631), corrected from an earlier 12-byte claim. No SHA-256 formula is defined over these bytes.",
+      "prefix": "REPID-RCTX-V1",
+      "prefixBytes": 13
+    }
+  },
+
+  "commentHash": {
+    "$comment": "SPEC-004 RF-08/RF-09/RF-10. REPID_RATING2 attaches a 32-byte commentHash to the score. The comment itself is never on-chain; hash fidelity is an off-chain claim. commentHash := SHA256('REPID-CMT-V1' ‖ receiptCategory(32, display order, the Receipt the rating belongs to) ‖ raterPkh(20) ‖ saltLen(1 byte) ‖ salt ‖ comment), saltLen 16..32.",
+    "lengthBytes": 32,
+    "preimage": {
+      "prefix": "REPID-CMT-V1",
+      "prefixBytes": 12,
+      "RECEIPT_CATEGORY_LENGTH": 32,
+      "SALT_MIN_LENGTH": 16,
+      "SALT_MAX_LENGTH": 32
+    }
+  },
+
+  "factTypes": [
+    { "type": "IDENTITY_GENESIS", "spec": "SPEC-001", "hasValidityField": false },
+    { "type": "IDENTITY_COLLATERAL_TOP_UP", "spec": "SPEC-001", "hasValidityField": true },
+    { "type": "IDENTITY_BURNED", "spec": "SPEC-001", "hasValidityField": true },
+    { "type": "RECEIPT_GENESIS", "spec": "SPEC-003", "hasValidityField": false },
+    { "type": "RATING_ISSUED", "spec": "SPEC-004", "hasValidityField": true },
+    { "type": "RATING_RETRACTION", "spec": "SPEC-004", "hasValidityField": true },
+    { "type": "PLATFORM_CONFIRMATION", "spec": "SPEC-003", "hasValidityField": true },
+    { "type": "TRUST_LINK", "spec": "SPEC-006", "hasValidityField": true }
+  ],
+
+  "contracts": {
+    "$comment": "Verified with cashc 0.13.2. WARNING: the 'fingerprint' the compiler emits is NOT a conformance anchor. Empirically it does not change when the contract's logic changes: editing `require(tx.outputs.length == 2)` to `== 3` altered the compiled bytecode, the embedded source and the debug bytecode, while the fingerprint stayed identical. It is recorded here for traceability only. Conformance is established by tools/check-artifacts.mjs, which recompiles each source and compares the full artifact (mnemonic bytecode, ABI, embedded source, debug bytecode) against the committed one.",
+    "compiler": { "name": "cashc", "version": "0.13.2" },
+    "identityGenesis": {
+      "source": "contracts/identity_genesis.cash",
+      "artifact": "artifacts/identity_genesis.json",
+      "fingerprint": "523dc5a28a46ebc07751512d900460de973474f3c1783ee9795d879e96d20cc6"
+    },
+    "identityVault": {
+      "$comment": "Versioned covenant registry since 0.4.0. `version` names the body carried by the flat fields, which stay the 0.3.0 body; `versions` maps each protocol version to the covenant source, artifact and recorded fingerprint. 0.3.0 is frozen (its burn path has no delay), 0.4.0 adds `require(this.age >= 144)` (SPEC-008 RF-O831, `identityVault.minBurnDelayBlocks`). 0.5.0 changes no covenant, so it records the 0.4.0 body under its own name: an implementation that declares 0.5.0 has canonical bytes to bind against without trial matching (SPEC-009 RF-W56/RF-W76). Built by tools/build-covenant-bytecode.mjs and checked by tools/check-artifacts.mjs.",
+      "version": "0.3.0",
+      "versions": {
+        "0.3.0": {
+          "source": "contracts/identity_vault_0_3_0.cash",
+          "artifact": "artifacts/identity_vault.json",
+          "fingerprint": "e035cb7ba3e01b88cfd79541a080a8956137ed98dbac9dd4a49a24ed485adf46"
+        },
+        "0.4.0": {
+          "source": "contracts/identity_vault.cash",
+          "artifact": "artifacts/identity_vault_0_4_0.json",
+          "fingerprint": "054e4c9df4556de3f984f2385e4bd26ece91f5bb6ff4f927a7c02ae51df9aa65"
+        },
+        "0.5.0": {
+          "source": "contracts/identity_vault.cash",
+          "artifact": "artifacts/identity_vault_0_4_0.json",
+          "fingerprint": "054e4c9df4556de3f984f2385e4bd26ece91f5bb6ff4f927a7c02ae51df9aa65"
+        }
+      },
+      "source": "contracts/identity_vault_0_3_0.cash",
+      "artifact": "artifacts/identity_vault.json",
+      "fingerprint": "e035cb7ba3e01b88cfd79541a080a8956137ed98dbac9dd4a49a24ed485adf46"
+    },
+    "receiptGenesis": {
+      "source": "contracts/receipt_genesis.cash",
+      "artifact": "artifacts/receipt_genesis.json",
+      "fingerprint": "abf981ccfd34ac6168bf279d4697c5e59a2278246bf34872c878926a1b5bec4a"
+    },
+    "ratingRight": {
+      "$comment": "RFC-004. RatingRightVault is referenced by ReceiptGenesisValidator through its P2SH32 hash, not by name: CashScript 0.13 cannot import a contract, build a LockingBytecode from raw bytes, or concatenate byte strings.",
+      "source": "contracts/rating_right.cash",
+      "artifact": "artifacts/rating_right.json",
+      "fingerprint": "570f8e7f2466ae78edc1be357e5627a5aad6a61e41d99dbdb880fb77af175080"
+    }
+  },
+
+  "identityVault": {
+    "$comment": "SPEC-008 RF-O831. burn() requires this.age >= 144 blocks (~24 h). Compiled and VM-verified in task E (conformance/identity-vault-burn-delay.test.mjs, libauth VM at BCH_2026_05): sequences below 144, sequences with the CSV disable flag set, and seconds-unit sequences are rejected; the burn must declare a relative-lock sequence in block units.",
+    "minBurnDelayBlocks": 144
+  },
+
+  "outOfScope": {
+    "$comment": "Values that are often mistaken for protocol constants but belong to the application layer. They MUST NOT be added to this file.",
+    "DEFAULT_IDENTITY_COLLATERAL": "application default (demo server), not a protocol invariant",
+    "reputationWeights": "interpretation layer, see SPEC-007 in the demo repository",
+    "confidenceIndex": "interpretation layer, see SPEC-007 in the demo repository"
+  }
+}

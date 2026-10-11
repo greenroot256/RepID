@@ -1,0 +1,28 @@
+{
+  "name": "repid-protocol",
+  "version": "0.5.0",
+  "private": true,
+  "description": "RepID protocol specification: facts, wire format, recognition rules and on-chain invariants. This repository contains no runtime code.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node tools/check-specs.mjs && node tools/build-requirements.mjs --check && node tools/build-covenant-bytecode.mjs --check && node tools/check-encoding.mjs && node --test \"conformance/**/*.test.mjs\"",
+    "conformance": "node --test \"conformance/**/*.test.mjs\"",
+    "artifacts:check": "node tools/check-artifacts.mjs",
+    "specs:check": "node tools/check-specs.mjs",
+    "requirements:build": "node tools/build-requirements.mjs",
+    "requirements:check": "node tools/build-requirements.mjs --check",
+    "bytecode:build": "node tools/build-covenant-bytecode.mjs",
+    "bytecode:check": "node tools/build-covenant-bytecode.mjs --check",
+    "encoding:check": "node tools/check-encoding.mjs",
+    "encoding:fix": "node tools/check-encoding.mjs --fix-dashes"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "cashc": "^0.13.2",
+    "cashscript": "^0.13.2"
+  }
+}

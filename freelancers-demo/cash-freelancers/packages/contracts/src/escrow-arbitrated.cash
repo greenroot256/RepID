@@ -1,0 +1,39 @@
+pragma cashscript ^0.13.0;
+
+// Arbitrated escrow (client-freelancer-arbiter, 2-of-3).
+//
+// Any two of the three parties can jointly authorize spending the funds
+// to whatever destination they agree on when building the transaction —
+// the classic 2-of-3 trust model:
+//   - client + freelancer agree (no arbiter needed at all)
+//   - freelancer + arbiter      (arbiter rules in the freelancer's favor)
+//   - client + arbiter          (arbiter rules in the client's favor)
+//
+// Deliberately does NOT use CashScript's `checkMultiSig` / OP_CHECKMULTISIG:
+// on BCH that opcode only accepts legacy ECDSA signatures, which breaks
+// the Schnorr-based WalletConnect placeholder convention the rest of
+// this project relies on (see escrow-bilateral.cash and
+// @cash-freelancers/wallet-connect). Two independent `checkSig` calls
+// give the same 2-of-3 guarantee while staying Schnorr-compatible.
+//
+// clientPkh / freelancerPkh / arbiterPkh are hash160(pubkey) — not the
+// full pubkeys — so the contract's address stays lighter.
+contract EscrowArbitrated(bytes20 clientPkh, bytes20 freelancerPkh, bytes20 arbiterPkh) {
+    function spend(pubkey pk1, sig s1, pubkey pk2, sig s2) {
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 1);
+
+        bytes20 pkh1 = hash160(pk1);
+        bytes20 pkh2 = hash160(pk2);
+
+        // Each signer has to be one of the three known parties...
+        require(pkh1 == clientPkh || pkh1 == freelancerPkh || pkh1 == arbiterPkh);
+        require(pkh2 == clientPkh || pkh2 == freelancerPkh || pkh2 == arbiterPkh);
+        // ...and they have to be two different people, not the same
+        // signature counted twice.
+        require(pkh1 != pkh2);
+
+        require(checkSig(s1, pk1));
+        require(checkSig(s2, pk2));
+    }
+}

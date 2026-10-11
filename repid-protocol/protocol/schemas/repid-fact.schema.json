@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://repid-protocol.org/schemas/repid-fact.schema.json",
+  "title": "RepID Fact",
+  "description": "A structured RepID fact reconstructed from a Bitcoin Cash transaction. Exactly one of the eight protocol fact types. Field names and types are normative (SPEC-008 section 3).",
+
+  "$defs": {
+    "pkh": {
+      "type": "string",
+      "description": "20-byte public key hash, lowercase hex, display order.",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "txid": {
+      "type": "string",
+      "description": "32-byte transaction identifier, lowercase hex, display order.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "category": {
+      "type": "string",
+      "description": "32-byte CashTokens category, lowercase hex.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "outpoint": {
+      "type": "string",
+      "description": "A transaction identifier and output index, `txid:vout`.",
+      "pattern": "^[0-9a-f]{64}:[0-9]+$"
+    },
+    "satoshis": {
+      "type": "string",
+      "description": "An amount in satoshis, as a decimal string. A string, never a JSON number: BCH amounts exceed the IEEE-754 safe integer range.",
+      "pattern": "^[0-9]+$"
+    },
+    "byteHex": {
+      "type": "string",
+      "description": "A single byte as lowercase hex.",
+      "pattern": "^[0-9a-f]{2}$"
+    },
+    "hash32": {
+      "type": "string",
+      "description": "32-byte hash, lowercase hex.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ratingRight": {
+      "type": "object",
+      "required": ["outpoint", "ownerPkh", "ratesPkh"],
+      "additionalProperties": false,
+      "properties": {
+        "outpoint": { "$ref": "#/$defs/outpoint" },
+        "ownerPkh": {
+          "$ref": "#/$defs/pkh",
+          "description": "Holder of the Rating Right: the party entitled to rate."
+        },
+        "ratesPkh": {
+          "$ref": "#/$defs/pkh",
+          "description": "Counterparty: the party this right entitles its holder to rate."
+        }
+      }
+    }
+  },
+
+  "oneOf": [
+    {
+      "title": "E1 IDENTITY_GENESIS",
+      "description": "An identity was minted. Two forms: vault (with collateral) and legacy (P2PKH, no collateral). SPEC-001.",
+      "type": "object",
+      "required": ["type", "txid", "identityCategory", "ownerPkh"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "IDENTITY_GENESIS" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "identityCategory": { "$ref": "#/$defs/category" },
+        "ownerPkh": {
+          "$ref": "#/$defs/pkh",
+          "description": "Owner of the identity. In vault form this is also the NFT commitment."
+        },
+        "collateral": {
+          "$ref": "#/$defs/satoshis",
+          "description": "Required in vault form, absent in legacy form. The value of the covenant output."
+        },
+        "identityOutpoint": {
+          "$ref": "#/$defs/outpoint",
+          "description": "Required in vault form. The covenant outpoint that the vault is tracked at, so later spends can be recognized as top-up or burn."
+        }
+      },
+      "dependentRequired": {
+        "collateral": ["identityOutpoint"],
+        "identityOutpoint": ["collateral"]
+      }
+    },
+    {
+      "title": "E2 IDENTITY_COLLATERAL_TOP_UP",
+      "description": "An identity's collateral was increased. The covenant never lets it decrease on-chain, so a decrease is recognized and reported as invalid. SPEC-001.",
+      "type": "object",
+      "required": ["type", "txid", "identityCategory", "ownerPkh", "spentOutpoint", "previousCollateral", "collateral", "valid"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "IDENTITY_COLLATERAL_TOP_UP" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "identityCategory": { "$ref": "#/$defs/category" },
+        "ownerPkh": { "$ref": "#/$defs/pkh" },
+        "spentOutpoint": {
+          "$ref": "#/$defs/outpoint",
+          "description": "The vault outpoint that was spent."
+        },
+        "previousCollateral": { "$ref": "#/$defs/satoshis" },
+        "collateral": { "$ref": "#/$defs/satoshis" },
+        "valid": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "E3 IDENTITY_BURNED",
+      "description": "An identity was burned. The collateral returns to the owner and the identity loses validity. SPEC-001.",
+      "type": "object",
+      "required": ["type", "txid", "identityCategory", "ownerPkh", "spentOutpoint", "valid"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "IDENTITY_BURNED" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "identityCategory": { "$ref": "#/$defs/category" },
+        "ownerPkh": { "$ref": "#/$defs/pkh" },
+        "spentOutpoint": { "$ref": "#/$defs/outpoint" },
+        "valid": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "E4 RECEIPT_GENESIS",
+      "description": "A Receipt and its two Rating Rights were minted in the same transaction. The only event that creates Rating Rights. SPEC-003.",
+      "type": "object",
+      "required": ["type", "txid", "receiptCategory", "receiptOwnerPkh", "ratingRights"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "RECEIPT_GENESIS" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "receiptCategory": { "$ref": "#/$defs/category" },
+        "receiptOwnerPkh": { "$ref": "#/$defs/pkh" },
+        "ratingRights": {
+          "type": "array",
+          "description": "Exactly two: one per party, cross-referencing each other.",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/ratingRight" }
+        },
+        "receiptContext": {
+          "type": "object",
+          "description": "Optional interaction context decoded from the Receipt's NFT commitment (SPEC-009 §9.2). Absent when the commitment is empty (legacy form).",
+          "required": ["interactionCategory", "roleA", "roleB"],
+          "additionalProperties": false,
+          "properties": {
+            "interactionCategory": { "$ref": "#/$defs/byteHex" },
+            "roleA": {
+              "$ref": "#/$defs/byteHex",
+              "description": "Role declared for the receipt owner (receiptOwnerPkh)."
+            },
+            "roleB": {
+              "$ref": "#/$defs/byteHex",
+              "description": "Role declared for the other party, the partner of the receipt owner."
+            },
+            "contextHash": {
+              "$ref": "#/$defs/hash32",
+              "description": "Present only in the 0x11 36-byte form."
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "E5 RATING_ISSUED",
+      "description": "A rating was issued by spending a Rating Right. The right is single use: the covenant's only path destroys the NFT on spend, which is what enforces one rating per participant at the chain level (SPEC-008 RF-S01). SPEC-004.",
+      "type": "object",
+      "required": ["type", "txid", "spentOutpoint", "raterPkh", "rateePkh", "score", "valid"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "RATING_ISSUED" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "spentOutpoint": {
+          "$ref": "#/$defs/outpoint",
+          "description": "The Rating Right that was spent."
+        },
+        "raterPkh": { "$ref": "#/$defs/pkh" },
+        "rateePkh": { "$ref": "#/$defs/pkh" },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "The encoded single byte. It is NOT constrained to 1-5 here: an out-of-range value must still be reported with valid=false, never dropped or clamped (SPEC-009 RF-W08)."
+        },
+        "commentHash": {
+          "$ref": "#/$defs/hash32",
+          "description": "Present only when the Rating Right was spent with REPID_RATING2 (SPEC-009 §4.2); absent with REPID_RATING1."
+        },
+        "valid": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "valid": { "const": true } }, "required": ["valid"] },
+          "then": {
+            "properties": {
+              "score": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "description": "A valid rating is necessarily within MIN_SCORE..MAX_SCORE. The type is restated here because this subschema is evaluated on its own; it is redundant with the enclosing score definition and does not change which facts are accepted."
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "E6 PLATFORM_CONFIRMATION",
+      "description": "A validating entity corroborated an interaction. Valid only if the referenced Receipt is already indexed, which makes this fact order dependent (SPEC-003, SPEC-005 section 5).",
+      "type": "object",
+      "required": ["type", "txid", "platformPkh", "receiptTxid", "valid"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "PLATFORM_CONFIRMATION" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "platformPkh": {
+          "$ref": "#/$defs/pkh",
+          "description": "Resolved from the unlocking script of the first input: the confirmator is the entity spending its own UTXO."
+        },
+        "receiptTxid": { "$ref": "#/$defs/txid" },
+        "valid": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "E7 TRUST_LINK",
+      "description": "A declared trust from A to B, unilateral: no consent from B, no Rating Rights, no prior identity. Self-trust is invalid. Addresses cold start. SPEC-006.",
+      "type": "object",
+      "required": ["type", "txid", "trusterPkh", "trustedPkh", "valid"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "TRUST_LINK" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "trusterPkh": { "$ref": "#/$defs/pkh" },
+        "trustedPkh": { "$ref": "#/$defs/pkh" },
+        "valid": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "E8 RATING_RETRACTION",
+      "description": "A rater unilaterally retracted a rating it had issued, referencing the rating's Receipt txid (REPID_RETRACT1). The original RATING_ISSUED is never deleted; the chain records, it does not rescind. SPEC-004 RF-06/RF-07.",
+      "type": "object",
+      "required": ["type", "txid", "raterPkh", "receiptTxid", "valid"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "RATING_RETRACTION" },
+        "txid": { "$ref": "#/$defs/txid" },
+        "raterPkh": {
+          "$ref": "#/$defs/pkh",
+          "description": "The rater who issued the original rating and now retracts it."
+        },
+        "receiptTxid": {
+          "$ref": "#/$defs/txid",
+          "description": "The Receipt whose rating is being retracted, in display order as referenced by REPID_RETRACT1."
+        },
+        "valid": { "type": "boolean" }
+      }
+    }
+  ],
+
+  "$comment": "Two rules are normative but NOT expressible in JSON Schema, and are therefore enforced by implementations and conformance tests rather than here: (1) trusterPkh != trustedPkh for a valid TRUST_LINK (SPEC-006 RF-04) - JSON Schema cannot compare two sibling property values; (2) collateral >= previousCollateral for a valid IDENTITY_COLLATERAL_TOP_UP (SPEC-001) - same reason. New in 0.4.0: (3) a valid RATING_RETRACTION requires the referenced rating to exist, to be signed by raterPkh, and to be the first retraction of that rating (SPEC-004 RF-07) - depends on retained state, not statically expressible; (4) a valid PLATFORM_CONFIRMATION requires the confirmer to be neither partyA nor partyB of the referenced Receipt (SPEC-003 RF-10) - depends on the Receipt index; (5) commentHash and contextHash fidelity (a different comment or context with the same hash) is not expressible and stays off-chain (SPEC-004 RF-09)."
+}

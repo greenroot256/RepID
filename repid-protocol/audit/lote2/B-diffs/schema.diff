@@ -1,0 +1,106 @@
+diff --git a/protocol/schemas/repid-fact.schema.json b/protocol/schemas/repid-fact.schema.json
+index 2c2a894..051c7ce 100644
+--- a/protocol/schemas/repid-fact.schema.json
++++ b/protocol/schemas/repid-fact.schema.json
+@@ -2,7 +2,7 @@
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "$id": "https://repid-protocol.org/schemas/repid-fact.schema.json",
+   "title": "RepID Fact",
+-  "description": "A structured RepID fact reconstructed from a Bitcoin Cash transaction. Exactly one of the seven protocol fact types. Field names and types are normative (SPEC-008 section 3).",
++  "description": "A structured RepID fact reconstructed from a Bitcoin Cash transaction. Exactly one of the eight protocol fact types. Field names and types are normative (SPEC-008 section 3).",
+ 
+   "$defs": {
+     "pkh": {
+@@ -30,6 +30,16 @@
+       "description": "An amount in satoshis, as a decimal string. A string, never a JSON number: BCH amounts exceed the IEEE-754 safe integer range.",
+       "pattern": "^[0-9]+$"
+     },
++    "byteHex": {
++      "type": "string",
++      "description": "A single byte as lowercase hex.",
++      "pattern": "^[0-9a-f]{2}$"
++    },
++    "hash32": {
++      "type": "string",
++      "description": "32-byte hash, lowercase hex.",
++      "pattern": "^[0-9a-f]{64}$"
++    },
+     "ratingRight": {
+       "type": "object",
+       "required": ["outpoint", "ownerPkh", "ratesPkh"],
+@@ -129,12 +139,33 @@
+           "minItems": 2,
+           "maxItems": 2,
+           "items": { "$ref": "#/$defs/ratingRight" }
++        },
++        "receiptContext": {
++          "type": "object",
++          "description": "Optional interaction context decoded from the Receipt's NFT commitment (SPEC-009 §9.2). Absent when the commitment is empty (legacy form).",
++          "required": ["interactionCategory", "roleA", "roleB"],
++          "additionalProperties": false,
++          "properties": {
++            "interactionCategory": { "$ref": "#/$defs/byteHex" },
++            "roleA": {
++              "$ref": "#/$defs/byteHex",
++              "description": "Role declared for the receipt owner (receiptOwnerPkh)."
++            },
++            "roleB": {
++              "$ref": "#/$defs/byteHex",
++              "description": "Role declared for the other party, the partner of the receipt owner."
++            },
++            "contextHash": {
++              "$ref": "#/$defs/hash32",
++              "description": "Present only in the 0x11 36-byte form."
++            }
++          }
+         }
+       }
+     },
+     {
+       "title": "E5 RATING_ISSUED",
+-      "description": "A rating was issued by spending a Rating Right. The right is single use: spending it also burns the NFT, which is what enforces one rating per participant without extra covenant logic. SPEC-004.",
++      "description": "A rating was issued by spending a Rating Right. The right is single use: the covenant's only path destroys the NFT on spend, which is what enforces one rating per participant at the chain level (SPEC-008 RF-S01). SPEC-004.",
+       "type": "object",
+       "required": ["type", "txid", "spentOutpoint", "raterPkh", "rateePkh", "score", "valid"],
+       "additionalProperties": false,
+@@ -153,6 +184,10 @@
+           "maximum": 255,
+           "description": "The encoded single byte. It is NOT constrained to 1-5 here: an out-of-range value must still be reported with valid=false, never dropped or clamped (SPEC-009 RF-W08)."
+         },
++        "commentHash": {
++          "$ref": "#/$defs/hash32",
++          "description": "Present only when the Rating Right was spent with REPID_RATING2 (SPEC-009 §4.2); absent with REPID_RATING1."
++        },
+         "valid": { "type": "boolean" }
+       },
+       "allOf": [
+@@ -201,8 +236,28 @@
+         "trustedPkh": { "$ref": "#/$defs/pkh" },
+         "valid": { "type": "boolean" }
+       }
++    },
++    {
++      "title": "E8 RATING_RETRACTION",
++      "description": "A rater unilaterally retracted a rating it had issued, referencing the rating's Receipt txid (REPID_RETRACT1). The original RATING_ISSUED is never deleted; the chain records, it does not rescind. SPEC-004 RF-06/RF-07.",
++      "type": "object",
++      "required": ["type", "txid", "raterPkh", "receiptTxid", "valid"],
++      "additionalProperties": false,
++      "properties": {
++        "type": { "const": "RATING_RETRACTION" },
++        "txid": { "$ref": "#/$defs/txid" },
++        "raterPkh": {
++          "$ref": "#/$defs/pkh",
++          "description": "The rater who issued the original rating and now retracts it."
++        },
++        "receiptTxid": {
++          "$ref": "#/$defs/txid",
++          "description": "The Receipt whose rating is being retracted, in display order as referenced by REPID_RETRACT1."
++        },
++        "valid": { "type": "boolean" }
++      }
+     }
+   ],
+ 
+-  "$comment": "Two rules are normative but NOT expressible in JSON Schema, and are therefore enforced by implementations and conformance tests rather than here: (1) trusterPkh != trustedPkh for a valid TRUST_LINK (SPEC-006 RF-04) - JSON Schema cannot compare two sibling property values; (2) collateral >= previousCollateral for a valid IDENTITY_COLLATERAL_TOP_UP (SPEC-001) - same reason."
++  "$comment": "Two rules are normative but NOT expressible in JSON Schema, and are therefore enforced by implementations and conformance tests rather than here: (1) trusterPkh != trustedPkh for a valid TRUST_LINK (SPEC-006 RF-04) - JSON Schema cannot compare two sibling property values; (2) collateral >= previousCollateral for a valid IDENTITY_COLLATERAL_TOP_UP (SPEC-001) - same reason. New in 0.4.0: (3) a valid RATING_RETRACTION requires the referenced rating to exist, to be signed by raterPkh, and to be the first retraction of that rating (SPEC-004 RF-07) - depends on retained state, not statically expressible; (4) a valid PLATFORM_CONFIRMATION requires the confirmer to be neither partyA nor partyB of the referenced Receipt (SPEC-003 RF-10) - depends on the Receipt index; (5) commentHash and contextHash fidelity (a different comment or context with the same hash) is not expressible and stays off-chain (SPEC-004 RF-09)."
+ }

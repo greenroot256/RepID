@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Compiler output from tools/check-artifacts.mjs. The canonical artifacts are
+# committed under artifacts/ on purpose: a protocol that does not publish the
+# bytecode it expects cannot be implemented against. These are scratch files.
+*.tmp.json
+tmp/
+.cache/
+
+# Cashc may drop build output next to a source when run without --output.
+contracts/*.json
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local experiment scratch. Never commit a raw transaction dump or a key.
+*.log
+scratch/
