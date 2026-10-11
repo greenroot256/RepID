@@ -37,7 +37,7 @@ if (rootEnv.loadedEnvFiles.length === 0) {
 const apiInternalUrl = process.env.API_INTERNAL_URL ?? "http://localhost:4000";
 
 const nextConfig = {
-  reactStrictMode: true,
+  output: 'export', // enable static export for GitHub Pages
   transpilePackages: ["@cash-freelancers/shared", "@cash-freelancers/wallet-connect"],
   // The workspace packages are written for Node's ESM resolver, so their
   // relative imports carry the `.js` extension the emitted JavaScript will have
@@ -57,6 +57,10 @@ const nextConfig = {
     return config;
   },
   async rewrites() {
+    // When exporting statically, API rewrites are not needed (they won't work).
+    if (process.env.NEXT_EXPORT) {
+      return [];
+    }
     return [{ source: "/api/:path*", destination: `${apiInternalUrl}/:path*` }];
   }
 };

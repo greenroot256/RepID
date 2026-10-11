@@ -31,7 +31,7 @@ export async function runIndexer() {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as any;
 
     if (result.errors) {
       console.error('Chaingraph GraphQL Error:', result.errors);

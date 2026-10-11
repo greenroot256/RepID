@@ -64,7 +64,12 @@ export function describeError(err: unknown): string {
     }
     // No message and no code: fall back to whatever shape this object has, but
     // say that it was message-less so the output is not mistaken for content.
-    return `${stringified(err)} (no message)${dataSuffix(err, null)}`;
+    // No message and no code: try to stringify the object. If it yields a non‑empty JSON representation we return it with a clear note, otherwise we provide an explicit fallback indicating the response was empty.
+const fallback = stringified(err);
+if (fallback) {
+  return `${fallback} (no message)${dataSuffix(err, null)}`;
+}
+return "WalletConnect error with empty response (no details)";
   }
 
   // A function, a symbol, a Map… `JSON.stringify` returns undefined for most.

@@ -16,6 +16,11 @@ export function ReputationBadge({ address }: { address: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Skip fetch if address is empty (user hasn't linked RepID)
+    if (!address) {
+      setLoading(false);
+      return;
+    }
     async function fetchReputation() {
       try {
         const result = await api.get<ReputationResponse>(`/reputation/${address}`);
@@ -31,6 +36,7 @@ export function ReputationBadge({ address }: { address: string }) {
 
   if (loading) return <Spinner />;
 
+  if (!address) return <Pill>RepID not linked</Pill>;
   if (!data) return <Pill>Reputation unavailable</Pill>;
 
   return (
